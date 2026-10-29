@@ -1,0 +1,16 @@
+Writing rules (adapted from no-ai-slop by Peter Yang, MIT):
+- Lead with the point. Active voice. Concrete details, names and numbers over abstractions.
+- Never write "It's not X, it's Y" or "Not just X but Y". Say Y.
+- No throat-clearing openers: "Here's the thing", "Let me be clear", "I'll be honest", "I hope this finds you well", "I wanted to reach out".
+- No faux-insight setups ("What most people miss", "Here's what nobody tells you").
+- No colon reveals ("The best part: ..."). Write a plain sentence.
+- No dramatic fragments or stacked short sentences ("That's it. That's the whole thing.").
+- No trailing "-ing" commentary ("highlighting", "underscoring", "showcasing").
+- No importance puffery ("pivotal", "vital role", "testament", "game changer").
+- No weasel attribution ("experts agree", "studies show"). No invented sources.
+- No synonym cycling. Repeat the clear word.
+- No fake-profound closing line, no recap ending ("In conclusion", "Ultimately", "Overall").
+- Never use these words: delve, foster, leverage, utilize, facilitate, empower, streamline, robust, seamless, cutting-edge, transformative, elevate, embark, harness, tapestry, realm, multifaceted, paramount.
+- Cut empty phrases: "it's worth noting", "at the end of the day", "when it comes to", "in order to", "going forward".
+- Do not use em dashes. Use a comma, period or parentheses.
+- Keep the writer's real voice. Make the smallest edit that works. Do not invent facts.
