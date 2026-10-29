@@ -270,8 +270,12 @@ def test_hotkey_formatting_and_pynput_mapping():
     assert main_mod.to_pynput_hotkey("option+space") == "<alt>+<space>"
     assert main_mod.to_pynput_hotkey("cmd+shift+d") == "<cmd>+<shift>+d"
     assert main_mod.format_hotkey_label("option+space") == "⌥ Space"
+    assert main_mod.to_carbon_hotkey("option+space") == (0x31, 1 << 11)
+    assert main_mod.to_carbon_hotkey("cmd+shift+d") == (0x02, (1 << 8) | (1 << 9))
     with pytest.raises(ValueError):
         main_mod.to_pynput_hotkey("   ")
+    with pytest.raises(ValueError):
+        main_mod.to_carbon_hotkey("space")
 
 
 def test_format_counter_states():
@@ -330,8 +334,20 @@ def test_popup_ui_end_to_end(tmp_path):
     assert popup.output_edit.toPlainText() == "Hi Priya, I can have the fix ready by Friday."
     assert popup.generate_btn.text() == "Regenerate"
     assert popup.copy_btn.isEnabled()
+    assert popup.clear_btn.isEnabled()
     assert popup.copy_output() is True
     assert app.clipboard().text() == "Hi Priya, I can have the fix ready by Friday."
+
+    # Clear button resets draft, context, output, and buttons
+    popup.context_edit.setPlainText("When is the fix ready?")
+    popup.clear_all()
+    assert popup.draft_edit.toPlainText() == ""
+    assert popup.context_edit.toPlainText() == ""
+    assert popup.output_edit.toPlainText() == ""
+    assert popup.generate_btn.text() == "Generate"
+    assert not popup.generate_btn.isEnabled()
+    assert not popup.copy_btn.isEnabled()
+    assert not popup.clear_btn.isEnabled()
 
 
 def test_popup_error_and_retry_state(tmp_path):
@@ -405,8 +421,10 @@ def test_settings_dialog_end_to_end(tmp_path):
         hotkey_status_fn=lambda spec: (True, None),
     )
 
-    # First open auto-picks the first installed model and shows Connected status
+    # First open auto-picks the first installed model and shows Connected status + available list
     assert "Connected" in dlg.server_status_label.text()
+    assert not dlg.available_models_label.isHidden()
+    assert "qwen2.5:7b-instruct, llama3.1:8b" in dlg.available_models_label.text()
     assert dlg.model_combo.currentText() == "qwen2.5:7b-instruct"
     assert config.load(cfg_file)["model"] == "qwen2.5:7b-instruct"
     assert dlg.model_hint_box.isHidden()
@@ -453,7 +471,44 @@ def test_startup_banner_and_popup_quit(tmp_path, capsys):
     assert "Diplomat running (PID" in out
     assert "Ctrl+C" in out
 
+    # Spotlight-like toggle_popup hides when visible and shows when hidden,
+    # and Settings appears on a higher window level than the always-on-top popup
+    controller.popup.show_popup()
+    assert controller.popup.isVisible()
+    dlg = controller.open_settings()
+    assert dlg.isVisible()
+    if sys.platform == "darwin":
+        import AppKit
+        import objc
+
+        ns_popup = objc.objc_object(c_void_p=int(controller.popup.winId())).window()
+        ns_dlg = objc.objc_object(c_void_p=int(dlg.winId())).window()
+        assert ns_dlg.level() > ns_popup.level()
+        assert not ns_popup.hidesOnDeactivate()
+        assert ns_popup.isFloatingPanel()
+        assert int(ns_popup.styleMask()) & (1 << 7)  # NSNonactivatingPanelMask
+        can_join = int(getattr(AppKit, "NSWindowCollectionBehaviorCanJoinAllSpaces", 1 << 0))
+        fs_aux = int(getattr(AppKit, "NSWindowCollectionBehaviorFullScreenAuxiliary", 1 << 8))
+        assert (int(ns_popup.collectionBehavior()) & can_join) != 0
+        assert (int(ns_popup.collectionBehavior()) & fs_aux) != 0
+
+    controller.popup.toggle_popup()
+    assert not controller.popup.isVisible()
+    controller.popup.toggle_popup()
+    assert controller.popup.isVisible()
+
+    # Carbon hotkey registration and rebinding without crashing
+    hm = main_mod.HotkeyManager(lambda: None)
+    assert hm.start("option+space") is True
+    hm.pause()
+    hm.resume()
+    assert hm.start("cmd+shift+space") is True
+    hm.stop()
+
+    dlg.close()
+    dlg.deleteLater()
     controller.popup.quit_btn.click()
+    app.processEvents()
     out2 = capsys.readouterr().out
     assert "Diplomat stopped (PID" in out2
 

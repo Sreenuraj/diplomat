@@ -40,22 +40,78 @@ def _unreachable(base_url: str) -> LLMError:
     return LLMError("unreachable", f"Can't reach the model server at {base_url}. Is it running?")
 
 
+def _extract_model_ids(payload: object) -> list[str]:
+    """Extract model IDs from OpenAI (`/v1/models`) or Ollama (`/api/tags`) payloads."""
+    items: list = []
+    if isinstance(payload, dict):
+        if isinstance(payload.get("data"), list):
+            items = payload["data"]
+        elif isinstance(payload.get("models"), list):
+            items = payload["models"]
+    elif isinstance(payload, list):
+        items = payload
+
+    ids: list[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            mid = item.get("id") or item.get("name") or item.get("model")
+            if isinstance(mid, str) and mid.strip():
+                ids.append(mid.strip())
+        elif isinstance(item, str) and item.strip():
+            ids.append(item.strip())
+    return sorted({i for i in ids if "embed" not in i.lower()})
+
+
 def list_models(base_url: str, api_key: str | None = None, timeout: float = 5.0) -> list[str]:
-    """Installed model ids, with embedding models hidden."""
-    try:
-        resp = httpx.get(_url(base_url, "/models"), headers=_headers(api_key), timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json().get("data", [])
-    except (httpx.ConnectError, httpx.ConnectTimeout):
-        raise _unreachable(base_url) from None
-    except httpx.TimeoutException:
-        raise LLMError("timeout", f"The server at {base_url} did not answer in time.") from None
-    except httpx.HTTPStatusError as exc:
-        raise LLMError("http", f"The server returned HTTP {exc.response.status_code}.") from None
-    except (ValueError, AttributeError):
-        raise LLMError("bad_response", "The server answered, but not with an OpenAI-style model list.") from None
-    ids = [m["id"] for m in data if isinstance(m, dict) and "id" in m]
-    return sorted(i for i in ids if "embed" not in i.lower())
+    """Installed model ids, with embedding models hidden.
+
+    Queries `/models` first (OpenAI-compatible) and falls back to Ollama's native `/api/tags`
+    if `/models` is empty or the user configured the root server URL without `/v1`.
+    """
+    headers = _headers(api_key)
+    root_url = re.sub(r"/v1/?$", "", base_url.strip().rstrip("/"))
+    candidates = [_url(base_url, "/models")]
+    if root_url:
+        v1_models = f"{root_url}/v1/models"
+        if v1_models not in candidates:
+            candidates.append(v1_models)
+        api_tags = f"{root_url}/api/tags"
+        if api_tags not in candidates:
+            candidates.append(api_tags)
+
+    last_error: LLMError | None = None
+    responded = False
+
+    for idx, url in enumerate(candidates):
+        try:
+            resp = httpx.get(url, headers=headers, timeout=timeout)
+            resp.raise_for_status()
+            payload = resp.json()
+            responded = True
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            if idx == 0:
+                raise _unreachable(base_url) from None
+            continue
+        except httpx.TimeoutException:
+            if idx == 0:
+                raise LLMError("timeout", f"The server at {base_url} did not answer in time.") from None
+            continue
+        except httpx.HTTPStatusError as exc:
+            last_error = LLMError("http", f"The server returned HTTP {exc.response.status_code}.")
+            continue
+        except (ValueError, AttributeError):
+            last_error = LLMError("bad_response", "The server answered, but not with a valid model list.")
+            continue
+
+        models = _extract_model_ids(payload)
+        if models:
+            return models
+
+    if responded:
+        return []
+    if last_error is not None:
+        raise last_error
+    raise _unreachable(base_url)
 
 
 def _raise_for_status(resp: httpx.Response, model: str) -> None:

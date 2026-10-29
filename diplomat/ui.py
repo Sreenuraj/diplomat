@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 from typing import Callable
 
@@ -17,6 +18,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import (
     QColor,
+    QCursor,
     QGuiApplication,
     QKeyEvent,
     QKeySequence,
@@ -183,7 +185,7 @@ def build_stylesheet(dark: bool) -> str:
             border: 1px solid {t["field_border"]};
             border-radius: 8px;
             padding: 5px 10px;
-            min-height: 22px;
+            min-height: 24px;
             font-size: 13px;
         }}
         QComboBox:hover {{
@@ -191,7 +193,16 @@ def build_stylesheet(dark: bool) -> str:
         }}
         QComboBox::drop-down {{
             border: none;
-            width: 20px;
+            width: 22px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {t["win_bg"]};
+            color: {t["text_fg"]};
+            border: 1px solid {t["field_border"]};
+            selection-background-color: {t["primary_bg"]};
+            selection-color: {t["primary_fg"]};
+            padding: 4px;
+            outline: none;
         }}
         QPushButton {{
             background-color: {t["btn_bg"]};
@@ -279,6 +290,93 @@ def build_stylesheet(dark: bool) -> str:
             border-radius: 7px;
         }}
     """
+
+
+def configure_macos_accessory_app() -> None:
+    """Make the macOS application an accessory agent (like Spotlight / Raycast)
+    so its floating NSPanel can appear over any active or full-screen app on the
+    current Space without forcing macOS to switch back to a desktop Space.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        import AppKit
+
+        ns_app = AppKit.NSApplication.sharedApplication()
+        if ns_app is not None:
+            policy = int(getattr(AppKit, "NSApplicationActivationPolicyAccessory", 1))
+            ns_app.setActivationPolicy_(policy)
+    except Exception:
+        pass
+
+
+def _configure_macos_window(
+    widget: QWidget,
+    level_offset: int = 0,
+    non_activating_panel: bool = True,
+) -> None:
+    """Configure macOS NSPanel / NSWindow so it floats above all apps on every
+    Space and full-screen Space (Spotlight-style), never hides when another app
+    is clicked, and follows the user across Spaces.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        import AppKit
+        import objc
+
+        wid = int(widget.winId())
+        if not wid:
+            return
+        ns_view = objc.objc_object(c_void_p=wid)
+        ns_win = ns_view.window()
+        if ns_win is None:
+            return
+
+        # NSNonactivatingPanelMask (1 << 7 = 128) lets QNSPanel receive key events
+        # and appear over full-screen apps without switching Spaces.
+        if non_activating_panel and hasattr(ns_win, "styleMask") and hasattr(ns_win, "setStyleMask_"):
+            non_activating_mask = 1 << 7
+            ns_win.setStyleMask_(int(ns_win.styleMask()) | non_activating_mask)
+
+        if hasattr(ns_win, "setHidesOnDeactivate_"):
+            ns_win.setHidesOnDeactivate_(False)
+        if hasattr(ns_win, "setFloatingPanel_"):
+            ns_win.setFloatingPanel_(True)
+        if hasattr(ns_win, "setWorksWhenModal_"):
+            ns_win.setWorksWhenModal_(True)
+
+        # NSStatusWindowLevel (25) sits above normal, floating, and full-screen app windows
+        base_level = int(getattr(AppKit, "NSStatusWindowLevel", 25))
+        ns_win.setLevel_(base_level + level_offset)
+
+        can_join_all_spaces = int(getattr(AppKit, "NSWindowCollectionBehaviorCanJoinAllSpaces", 1 << 0))
+        stationary = int(getattr(AppKit, "NSWindowCollectionBehaviorStationary", 1 << 4))
+        ignores_cycle = int(getattr(AppKit, "NSWindowCollectionBehaviorIgnoresCycle", 1 << 6))
+        fullscreen_aux = int(getattr(AppKit, "NSWindowCollectionBehaviorFullScreenAuxiliary", 1 << 8))
+        ns_win.setCollectionBehavior_(
+            can_join_all_spaces | stationary | ignores_cycle | fullscreen_aux
+        )
+        if hasattr(ns_win, "orderFrontRegardless"):
+            ns_win.orderFrontRegardless()
+    except Exception:
+        pass
+
+
+def open_macos_emoji_picker() -> bool:
+    """Open the native macOS Character Viewer / Emoji & Symbols palette."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        import AppKit
+
+        app = AppKit.NSApplication.sharedApplication()
+        if app is not None and hasattr(app, "orderFrontCharacterPalette_"):
+            app.orderFrontCharacterPalette_(None)
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def format_counter(length: int, limit: int | None) -> tuple[str, str]:
@@ -463,6 +561,9 @@ class PopupWindow(QWidget):
 
     def _setup_window(self) -> None:
         self.setWindowTitle("Diplomat")
+        # Qt.WindowType.Tool creates an NSPanel on macOS, which is required by WindowServer
+        # (along with NSNonactivatingPanelMask + FullScreenAuxiliary) to appear on top of
+        # full-screen apps and follow across all desktop Spaces without switching Spaces.
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -504,6 +605,19 @@ class PopupWindow(QWidget):
         header.addWidget(self.preset_combo)
 
         header.addStretch(1)
+
+        self.emoji_btn = QPushButton("😊")
+        self.emoji_btn.setObjectName("iconButton")
+        self.emoji_btn.setToolTip("Insert Emoji / Smiley (⌃⌘Space)")
+        self.emoji_btn.clicked.connect(self._on_emoji_clicked)
+        header.addWidget(self.emoji_btn)
+
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setObjectName("linkButton")
+        self.clear_btn.setToolTip("Clear draft, reply context and output (⌘K)")
+        self.clear_btn.clicked.connect(self.clear_all)
+        self.clear_btn.setEnabled(False)
+        header.addWidget(self.clear_btn)
 
         self.settings_btn = QPushButton("⚙")
         self.settings_btn.setObjectName("iconButton")
@@ -655,6 +769,9 @@ class PopupWindow(QWidget):
         regen_sc = QShortcut(QKeySequence("Ctrl+R"), self)
         regen_sc.activated.connect(self.trigger_generate)
 
+        clear_sc = QShortcut(QKeySequence("Ctrl+K"), self)
+        clear_sc.activated.connect(self.clear_all)
+
         settings_sc = QShortcut(QKeySequence("Ctrl+,"), self)
         settings_sc.activated.connect(self._on_settings_clicked)
 
@@ -771,6 +888,28 @@ class PopupWindow(QWidget):
 
     def _on_draft_changed(self) -> None:
         self._update_controls()
+
+    def _on_emoji_clicked(self) -> None:
+        if not self.context_edit.hasFocus():
+            self.draft_edit.setFocus()
+        open_macos_emoji_picker()
+
+    def clear_all(self) -> None:
+        """Clear draft, reply context, output, and error state."""
+        if self.is_generating():
+            self.cancel_generation()
+        self._last_result = None
+        self._last_error_kind = None
+        self.draft_edit.clear()
+        self.context_edit.clear()
+        self.output_edit.clear()
+        self.error_label.setText("")
+        self.error_label.setVisible(False)
+        self.open_settings_inline_btn.setVisible(False)
+        self.status_label.setText("")
+        self._update_counter()
+        self._update_controls()
+        self.draft_edit.setFocus()
 
     def _on_settings_clicked(self) -> None:
         self.settings_requested.emit()
@@ -902,7 +1041,9 @@ class PopupWindow(QWidget):
 
     def _update_controls(self) -> None:
         has_draft = bool(self.draft_edit.toPlainText().strip())
+        has_context = bool(self.context_edit.toPlainText().strip())
         has_output = bool(self.output_edit.toPlainText().strip())
+        has_any = has_draft or has_context or has_output or (self._last_error_kind is not None)
 
         if self.is_generating():
             self.generate_btn.setText("Cancel")
@@ -916,6 +1057,7 @@ class PopupWindow(QWidget):
                 self.generate_btn.setText("Generate")
             self.generate_btn.setEnabled(has_draft)
 
+        self.clear_btn.setEnabled(has_any or self.is_generating())
         self.copy_btn.setEnabled(has_output and not self.is_generating())
 
     # ---------------------------------------------------------------- clipboard & visibility
@@ -945,7 +1087,8 @@ class PopupWindow(QWidget):
         self.setStyleSheet(build_stylesheet(is_dark_mode()))
 
     def center_on_screen(self) -> None:
-        screen = QGuiApplication.primaryScreen()
+        cursor_pos = QCursor.pos()
+        screen = QGuiApplication.screenAt(cursor_pos) or QGuiApplication.primaryScreen()
         if screen is None:
             return
         geo = screen.availableGeometry()
@@ -958,10 +1101,22 @@ class PopupWindow(QWidget):
         self.reload_config()
         if not self.isVisible():
             self.center_on_screen()
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
         self.setWindowOpacity(0.0)
         self.show()
+        _configure_macos_window(self, level_offset=0, non_activating_panel=True)
+        if sys.platform == "darwin":
+            try:
+                import AppKit
+
+                AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
         self.raise_()
         self.activateWindow()
+        # Re-apply after Qt's show/raise/activateWindow so Qt doesn't reset NSPanel flags
+        _configure_macos_window(self, level_offset=0, non_activating_panel=True)
         self.draft_edit.setFocus()
         self.draft_edit.selectAll()
 
@@ -974,12 +1129,15 @@ class PopupWindow(QWidget):
         self._fade_anim = anim
 
     def hide_popup(self) -> None:
+        if self._fade_anim is not None:
+            self._fade_anim.stop()
         if not self.isVisible():
             return
         self.hide()
 
     def toggle_popup(self) -> None:
-        if self.isVisible() and self.isActiveWindow():
+        """Spotlight-style toggle: if visible (always on top), hide it; if hidden, show it."""
+        if self.isVisible():
             self.hide_popup()
         else:
             self.show_popup()
@@ -1070,6 +1228,8 @@ class HotkeyRecorder(QPushButton):
     """Clickable button that records a modifier+key shortcut."""
 
     hotkey_changed = Signal(str)
+    recording_started = Signal()
+    recording_cancelled = Signal()
 
     def __init__(self, initial: str = "option+space", parent: QWidget | None = None):
         super().__init__(parent)
@@ -1089,7 +1249,9 @@ class HotkeyRecorder(QPushButton):
         self._refresh_text()
 
     def _start_recording(self) -> None:
-        self._recording = True
+        if not self._recording:
+            self._recording = True
+            self.recording_started.emit()
         self.setText("Press shortcut… (Esc to cancel)")
         self.setFocus()
 
@@ -1103,6 +1265,7 @@ class HotkeyRecorder(QPushButton):
         if event.key() == Qt.Key.Key_Escape:
             self._recording = False
             self._refresh_text()
+            self.recording_cancelled.emit()
             event.accept()
             return
         spec = keyevent_to_hotkey_spec(event.key(), event.modifiers())
@@ -1117,6 +1280,7 @@ class HotkeyRecorder(QPushButton):
         if self._recording:
             self._recording = False
             self._refresh_text()
+            self.recording_cancelled.emit()
         super().focusOutEvent(event)
 
 
@@ -1156,6 +1320,8 @@ class SettingsDialog(QDialog):
         list_models_fn: Callable[[str, str | None], list[str]] | None = None,
         test_connection_fn: Callable[[str, str, str | None], tuple[str, float]] | None = None,
         hotkey_status_fn: Callable[[str], tuple[bool, str | None]] | None = None,
+        hotkey_pause_fn: Callable[[], None] | None = None,
+        hotkey_resume_fn: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -1164,13 +1330,38 @@ class SettingsDialog(QDialog):
         self._list_models_fn = list_models_fn or (lambda url, key: llm.list_models(url, key))
         self._test_connection_fn = test_connection_fn or llm.test_connection
         self._hotkey_status_fn = hotkey_status_fn
+        self._hotkey_pause_fn = hotkey_pause_fn
+        self._hotkey_resume_fn = hotkey_resume_fn
 
         self.setWindowTitle("Diplomat Settings")
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
         self.setMinimumWidth(540)
         self.setStyleSheet(build_stylesheet(is_dark_mode()))
         self._build_ui()
         self._load_from_cfg()
         self.refresh_models()
+
+    def present(self) -> None:
+        """Show Settings above the always-on-top PopupWindow and focus it."""
+        self.setStyleSheet(build_stylesheet(is_dark_mode()))
+        self.refresh_models()
+        self.show()
+        _configure_macos_window(self, level_offset=2, non_activating_panel=False)
+        if sys.platform == "darwin":
+            try:
+                import AppKit
+
+                AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
+        self.raise_()
+        self.activateWindow()
+        _configure_macos_window(self, level_offset=2, non_activating_panel=False)
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -1224,12 +1415,12 @@ class SettingsDialog(QDialog):
         grid.addWidget(self.api_key_edit, row, 1)
         row += 1
 
-        # 4. Model dropdown + Refresh + empty-model copyable hint
+        # 4. Model dropdown + Refresh + available models summary + empty-model copyable hint
         model_row = QHBoxLayout()
         model_row.setContentsMargins(0, 0, 0, 0)
         model_row.setSpacing(8)
         self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
+        self.model_combo.setEditable(False)
         self.model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
         model_row.addWidget(self.model_combo, 1)
@@ -1240,6 +1431,12 @@ class SettingsDialog(QDialog):
         model_row.addWidget(self.refresh_btn)
         grid.addWidget(_make_row_label("Model:"), row, 0)
         grid.addLayout(model_row, row, 1)
+        row += 1
+
+        self.available_models_label = _make_status_label()
+        self.available_models_label.setObjectName("mutedLabel")
+        self.available_models_label.setVisible(False)
+        grid.addWidget(self.available_models_label, row, 1)
         row += 1
 
         self.model_hint_box = QLineEdit("ollama pull qwen2.5:7b-instruct")
@@ -1272,6 +1469,10 @@ class SettingsDialog(QDialog):
         hotkey_row.setContentsMargins(0, 0, 0, 0)
         hotkey_row.setSpacing(8)
         self.hotkey_recorder = HotkeyRecorder()
+        if self._hotkey_pause_fn is not None:
+            self.hotkey_recorder.recording_started.connect(self._hotkey_pause_fn)
+        if self._hotkey_resume_fn is not None:
+            self.hotkey_recorder.recording_cancelled.connect(self._hotkey_resume_fn)
         self.hotkey_recorder.hotkey_changed.connect(self._on_hotkey_changed)
         hotkey_row.addWidget(self.hotkey_recorder, 1)
 
@@ -1427,6 +1628,7 @@ class SettingsDialog(QDialog):
         except llm.LLMError as exc:
             self.server_status_label.setStyleSheet("color: #ff453a; font-size: 12px;")
             self.server_status_label.setText(f"● {exc}")
+            self.available_models_label.setVisible(False)
             self.model_hint_box.setVisible(False)
             self.adjustSize()
             return []
@@ -1439,9 +1641,13 @@ class SettingsDialog(QDialog):
         if models:
             self.server_status_label.setStyleSheet("color: #30d158; font-size: 12px;")
             self.server_status_label.setText(f"● Connected ({len(models)} model{'s' if len(models) != 1 else ''} available)")
+            self.available_models_label.setText("Available: " + ", ".join(models))
+            self.available_models_label.setVisible(True)
             self.model_hint_box.setVisible(False)
             chosen = current_model if current_model in models else models[0]
-            self.model_combo.setCurrentText(chosen)
+            idx = self.model_combo.findText(chosen)
+            if idx >= 0:
+                self.model_combo.setCurrentIndex(idx)
             self.model_combo.blockSignals(False)
             if chosen != current_model:
                 self.cfg["model"] = chosen
@@ -1449,8 +1655,9 @@ class SettingsDialog(QDialog):
         else:
             if current_model:
                 self.model_combo.addItem(current_model)
-                self.model_combo.setCurrentText(current_model)
+                self.model_combo.setCurrentIndex(0)
             self.model_combo.blockSignals(False)
+            self.available_models_label.setVisible(False)
             self.server_status_label.setStyleSheet("color: #f59e0b; font-size: 12px;")
             self.server_status_label.setText("● Server reachable, but no models are installed. Pull one in Terminal:")
             self.model_hint_box.setVisible(True)

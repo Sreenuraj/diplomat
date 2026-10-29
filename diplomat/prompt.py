@@ -111,7 +111,9 @@ PRESETS: dict[str, Preset] = {
         None,
         "This is a chat or email reply at work (Slack, Teams, Outlook). Short paragraphs. "
         "No greeting block or sign-off unless the draft has one. Plain text only: no markdown, "
-        "no bold, no bullet symbols unless the draft lists items. No emoji.",
+        "no bold, no bullet symbols unless the draft lists items. "
+        "Do not add emojis or emoticons unless the draft already contains emojis or smileys; "
+        "if the draft uses emojis or smileys, you may keep or adapt appropriate ones where they fit naturally.",
     ),
     "linkedin": Preset(
         "linkedin",
@@ -120,7 +122,7 @@ PRESETS: dict[str, Preset] = {
         "This is a LinkedIn post. Make the first one or two lines strong enough to stop the scroll "
         "without clickbait. Short paragraphs separated by blank lines. Concrete details over general claims. "
         "At most 3 hashtags, only at the end. No engagement bait (no 'Agree?', no 'Thoughts?'). "
-        "Plain text, no markdown bold.",
+        "Plain text, no markdown bold. If the draft includes emojis or smileys, you may keep appropriate ones.",
     ),
 }
 
@@ -153,6 +155,7 @@ FIDELITY = (
     "- Keep the speaker's position. If the draft refuses, conditions or pushes back, the message must still refuse, "
     "condition or push back (politely). Do not turn a firm statement into a vague suggestion.\n"
     "- Do not invent facts, commitments, deadlines, apologies or thanks that the draft does not contain.\n"
+    "- If the draft contains emojis or smileys (e.g. 🙂, 👍, :), :D), you may keep or adapt friendly emojis/smileys in the response where appropriate; if the draft has none, do not add emojis.\n"
     "- If the draft is rude, remove the insults and keep the point.\n"
     "- If the point is unclear, stay neutral instead of guessing.\n"
     "- Write the message in English.\n"
