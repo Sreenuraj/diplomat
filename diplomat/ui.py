@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QFormLayout,
     QFrame,
     QGraphicsDropShadowEffect,
     QGridLayout,
@@ -36,6 +35,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -64,58 +64,82 @@ def is_dark_mode() -> bool:
     return False
 
 
-def build_stylesheet(dark: bool) -> str:
+def _theme_tokens(dark: bool) -> dict[str, str]:
     if dark:
-        card_bg = "rgba(32, 32, 36, 242)"
-        card_border = "rgba(255, 255, 255, 36)"
-        text_fg = "#f2f2f7"
-        muted_fg = "#98989f"
-        field_bg = "rgba(255, 255, 255, 16)"
-        field_border = "rgba(255, 255, 255, 28)"
-        field_focus = "rgba(10, 132, 255, 180)"
-        btn_bg = "rgba(255, 255, 255, 22)"
-        btn_hover = "rgba(255, 255, 255, 36)"
-        primary_bg = "#0a84ff"
-        primary_hover = "#409cff"
-        primary_fg = "#ffffff"
-        divider = "rgba(255, 255, 255, 26)"
-        slider_groove = "rgba(255, 255, 255, 38)"
-    else:
-        card_bg = "rgba(250, 250, 252, 245)"
-        card_border = "rgba(0, 0, 0, 28)"
-        text_fg = "#1c1c1e"
-        muted_fg = "#6c6c70"
-        field_bg = "rgba(0, 0, 0, 11)"
-        field_border = "rgba(0, 0, 0, 22)"
-        field_focus = "rgba(0, 122, 255, 170)"
-        btn_bg = "rgba(0, 0, 0, 14)"
-        btn_hover = "rgba(0, 0, 0, 24)"
-        primary_bg = "#007aff"
-        primary_hover = "#0062cc"
-        primary_fg = "#ffffff"
-        divider = "rgba(0, 0, 0, 20)"
-        slider_groove = "rgba(0, 0, 0, 32)"
+        return {
+            "win_bg": "#1e1e22",
+            "card_bg": "rgba(32, 32, 36, 244)",
+            "card_border": "rgba(255, 255, 255, 38)",
+            "text_fg": "#f2f2f7",
+            "muted_fg": "#98989f",
+            "field_bg": "rgba(255, 255, 255, 16)",
+            "field_border": "rgba(255, 255, 255, 32)",
+            "field_focus": "#0a84ff",
+            "btn_bg": "rgba(255, 255, 255, 22)",
+            "btn_hover": "rgba(255, 255, 255, 38)",
+            "primary_bg": "#0a84ff",
+            "primary_hover": "#409cff",
+            "primary_fg": "#ffffff",
+            "danger_fg": "#ff453a",
+            "danger_bg": "rgba(255, 69, 58, 28)",
+            "danger_hover": "rgba(255, 69, 58, 52)",
+            "divider": "rgba(255, 255, 255, 26)",
+            "slider_groove": "rgba(255, 255, 255, 42)",
+        }
+    return {
+        "win_bg": "#f5f5f7",
+        "card_bg": "rgba(250, 250, 252, 246)",
+        "card_border": "rgba(0, 0, 0, 28)",
+        "text_fg": "#1c1c1e",
+        "muted_fg": "#6c6c70",
+        "field_bg": "rgba(0, 0, 0, 9)",
+        "field_border": "rgba(0, 0, 0, 24)",
+        "field_focus": "#007aff",
+        "btn_bg": "rgba(0, 0, 0, 13)",
+        "btn_hover": "rgba(0, 0, 0, 24)",
+        "primary_bg": "#007aff",
+        "primary_hover": "#0062cc",
+        "primary_fg": "#ffffff",
+        "danger_fg": "#d70015",
+        "danger_bg": "rgba(215, 0, 21, 18)",
+        "danger_hover": "rgba(215, 0, 21, 34)",
+        "divider": "rgba(0, 0, 0, 20)",
+        "slider_groove": "rgba(0, 0, 0, 32)",
+    }
 
+
+def build_stylesheet(dark: bool) -> str:
+    t = _theme_tokens(dark)
     return f"""
+        QDialog {{
+            background-color: {t["win_bg"]};
+            color: {t["text_fg"]};
+        }}
         QFrame#card {{
-            background-color: {card_bg};
-            border: 1px solid {card_border};
+            background-color: {t["card_bg"]};
+            border: 1px solid {t["card_border"]};
             border-radius: 22px;
         }}
         QLabel {{
-            color: {text_fg};
+            color: {t["text_fg"]};
             background: transparent;
+            font-size: 13px;
         }}
         QLabel#titleLabel {{
             font-size: 15px;
             font-weight: 600;
         }}
+        QLabel#formLabel {{
+            color: {t["muted_fg"]};
+            font-size: 13px;
+            font-weight: 500;
+        }}
         QLabel#mutedLabel, QLabel#sliderLabel {{
-            color: {muted_fg};
+            color: {t["muted_fg"]};
             font-size: 12px;
         }}
         QLabel#errorLabel {{
-            color: #ff453a;
+            color: {t["danger_fg"]};
             font-size: 12px;
         }}
         QLabel#warnLabel {{
@@ -123,95 +147,127 @@ def build_stylesheet(dark: bool) -> str:
             font-size: 11px;
         }}
         QPlainTextEdit {{
-            background-color: {field_bg};
-            color: {text_fg};
-            border: 1px solid {field_border};
+            background-color: {t["field_bg"]};
+            color: {t["text_fg"]};
+            border: 1px solid {t["field_border"]};
             border-radius: 10px;
             padding: 8px;
             font-size: 13px;
-            selection-background-color: {primary_bg};
-            selection-color: {primary_fg};
+            selection-background-color: {t["primary_bg"]};
+            selection-color: {t["primary_fg"]};
         }}
         QPlainTextEdit:focus {{
-            border: 1px solid {field_focus};
+            border: 1px solid {t["field_focus"]};
         }}
         QPlainTextEdit#outputEdit {{
             background-color: transparent;
-            border: 1px solid {field_border};
+            border: 1px solid {t["field_border"]};
+        }}
+        QLineEdit {{
+            background-color: {t["field_bg"]};
+            color: {t["text_fg"]};
+            border: 1px solid {t["field_border"]};
+            border-radius: 8px;
+            padding: 5px 10px;
+            min-height: 22px;
+            font-size: 13px;
+            selection-background-color: {t["primary_bg"]};
+            selection-color: {t["primary_fg"]};
+        }}
+        QLineEdit:focus {{
+            border: 1px solid {t["field_focus"]};
         }}
         QComboBox {{
-            background-color: {btn_bg};
-            color: {text_fg};
-            border: 1px solid {field_border};
+            background-color: {t["btn_bg"]};
+            color: {t["text_fg"]};
+            border: 1px solid {t["field_border"]};
             border-radius: 8px;
-            padding: 4px 10px;
-            font-size: 12px;
+            padding: 5px 10px;
+            min-height: 22px;
+            font-size: 13px;
         }}
         QComboBox:hover {{
-            background-color: {btn_hover};
+            background-color: {t["btn_hover"]};
         }}
         QComboBox::drop-down {{
             border: none;
-            width: 18px;
+            width: 20px;
         }}
         QPushButton {{
-            background-color: {btn_bg};
-            color: {text_fg};
-            border: 1px solid {field_border};
+            background-color: {t["btn_bg"]};
+            color: {t["text_fg"]};
+            border: 1px solid {t["field_border"]};
             border-radius: 8px;
-            padding: 5px 12px;
+            padding: 5px 14px;
+            min-height: 22px;
             font-size: 12px;
             font-weight: 500;
         }}
         QPushButton:hover {{
-            background-color: {btn_hover};
+            background-color: {t["btn_hover"]};
         }}
         QPushButton:disabled {{
-            color: {muted_fg};
+            color: {t["muted_fg"]};
             background-color: transparent;
-            border-color: {divider};
+            border-color: {t["divider"]};
         }}
         QPushButton#primaryButton {{
-            background-color: {primary_bg};
-            color: {primary_fg};
+            background-color: {t["primary_bg"]};
+            color: {t["primary_fg"]};
             border: none;
             font-weight: 600;
         }}
         QPushButton#primaryButton:hover {{
-            background-color: {primary_hover};
+            background-color: {t["primary_hover"]};
         }}
         QPushButton#primaryButton:disabled {{
-            background-color: {btn_bg};
-            color: {muted_fg};
+            background-color: {t["btn_bg"]};
+            color: {t["muted_fg"]};
+        }}
+        QPushButton#dangerButton {{
+            background-color: {t["danger_bg"]};
+            color: {t["danger_fg"]};
+            border: 1px solid {t["danger_fg"]};
+            font-weight: 500;
+        }}
+        QPushButton#dangerButton:hover {{
+            background-color: {t["danger_hover"]};
         }}
         QPushButton#sectionToggle, QPushButton#linkButton, QPushButton#iconButton {{
             background: transparent;
             border: none;
-            color: {muted_fg};
+            color: {t["muted_fg"]};
             padding: 2px 6px;
+            min-height: 20px;
             font-size: 12px;
             text-align: left;
         }}
         QPushButton#sectionToggle:hover, QPushButton#linkButton:hover, QPushButton#iconButton:hover {{
-            color: {text_fg};
+            color: {t["text_fg"]};
         }}
         QPushButton#iconButton {{
             font-size: 15px;
             padding: 2px 8px;
+            text-align: center;
+        }}
+        QCheckBox {{
+            color: {t["text_fg"]};
+            font-size: 13px;
+            spacing: 8px;
         }}
         QFrame#divider {{
-            background-color: {divider};
+            background-color: {t["divider"]};
             max-height: 1px;
             min-height: 1px;
             border: none;
         }}
         QSlider::groove:horizontal {{
             height: 4px;
-            background: {slider_groove};
+            background: {t["slider_groove"]};
             border-radius: 2px;
         }}
         QSlider::sub-page:horizontal {{
-            background: {primary_bg};
+            background: {t["primary_bg"]};
             border-radius: 2px;
         }}
         QSlider::handle:horizontal {{
@@ -376,6 +432,7 @@ class PopupWindow(QWidget):
     """Floating translucent Diplomat popup window."""
 
     settings_requested = Signal()
+    quit_requested = Signal()
     config_changed = Signal(dict)
 
     def __init__(
@@ -412,8 +469,8 @@ class PopupWindow(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setMinimumWidth(520)
-        self.resize(540, 440)
+        self.setMinimumWidth(540)
+        self.resize(560, 450)
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -432,7 +489,7 @@ class PopupWindow(QWidget):
         layout.setContentsMargins(18, 14, 18, 16)
         layout.setSpacing(10)
 
-        # 1. Header bar: Title | Preset dropdown | Settings button
+        # 1. Header bar: Title | Preset dropdown | Settings button | Quit button
         header = QHBoxLayout()
         header.setSpacing(10)
         self.title_label = QLabel("Diplomat")
@@ -440,6 +497,7 @@ class PopupWindow(QWidget):
         header.addWidget(self.title_label)
 
         self.preset_combo = QComboBox()
+        self.preset_combo.setMinimumWidth(148)
         for key, preset in prompt.PRESETS.items():
             self.preset_combo.addItem(preset.label, userData=key)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
@@ -452,6 +510,12 @@ class PopupWindow(QWidget):
         self.settings_btn.setToolTip("Settings (⌘,)")
         self.settings_btn.clicked.connect(self._on_settings_clicked)
         header.addWidget(self.settings_btn)
+
+        self.quit_btn = QPushButton("Quit")
+        self.quit_btn.setObjectName("linkButton")
+        self.quit_btn.setToolTip("Quit Diplomat completely (⌘Q)")
+        self.quit_btn.clicked.connect(self.quit_requested.emit)
+        header.addWidget(self.quit_btn)
         layout.addLayout(header)
 
         # Non-local URL warning banner (only shown when base_url is remote)
@@ -484,6 +548,7 @@ class PopupWindow(QWidget):
 
         # 4. Collapsible Tone panel + Reset button
         tone_header = QHBoxLayout()
+        tone_header.setContentsMargins(0, 0, 0, 0)
         self.tone_toggle_btn = QPushButton("▸ Tone")
         self.tone_toggle_btn.setObjectName("sectionToggle")
         self.tone_toggle_btn.clicked.connect(self._toggle_tone_panel)
@@ -500,8 +565,10 @@ class PopupWindow(QWidget):
         self.tone_panel = QWidget()
         tone_grid = QGridLayout(self.tone_panel)
         tone_grid.setContentsMargins(4, 2, 4, 4)
-        tone_grid.setHorizontalSpacing(14)
-        tone_grid.setVerticalSpacing(6)
+        tone_grid.setHorizontalSpacing(16)
+        tone_grid.setVerticalSpacing(8)
+        for col in range(3):
+            tone_grid.setColumnStretch(col, 1)
 
         self.slider_widgets: dict[str, QSlider] = {}
         self.slider_labels: dict[str, QLabel] = {}
@@ -565,12 +632,14 @@ class PopupWindow(QWidget):
         footer.addWidget(self.open_settings_inline_btn)
 
         self.generate_btn = QPushButton("Generate")
+        self.generate_btn.setMinimumWidth(96)
         self.generate_btn.setToolTip("Generate (⌘↩) or Regenerate (⌘R)")
         self.generate_btn.clicked.connect(self._on_generate_button_clicked)
         footer.addWidget(self.generate_btn)
 
         self.copy_btn = QPushButton("Copy")
         self.copy_btn.setObjectName("primaryButton")
+        self.copy_btn.setMinimumWidth(82)
         self.copy_btn.setToolTip("Copy to clipboard (↩ in output copies & closes)")
         self.copy_btn.clicked.connect(self.copy_output)
         self.copy_btn.setEnabled(False)
@@ -588,6 +657,9 @@ class PopupWindow(QWidget):
 
         settings_sc = QShortcut(QKeySequence("Ctrl+,"), self)
         settings_sc.activated.connect(self._on_settings_clicked)
+
+        quit_sc = QShortcut(QKeySequence("Ctrl+Q"), self)
+        quit_sc.activated.connect(self.quit_requested.emit)
 
         esc_sc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         esc_sc.activated.connect(self.handle_escape)
@@ -938,7 +1010,7 @@ class PopupWindow(QWidget):
         super().changeEvent(event)
 
 
-# ---------------------------------------------------------------- Step 3: Hotkey recorder & Settings dialog
+# ---------------------------------------------------------------- Hotkey recorder & Settings dialog
 
 _MODIFIER_KEYS = {
     Qt.Key.Key_Control,
@@ -1004,6 +1076,7 @@ class HotkeyRecorder(QPushButton):
         self._hotkey = initial or "option+space"
         self._recording = False
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.clicked.connect(self._start_recording)
         self._refresh_text()
 
@@ -1054,10 +1127,27 @@ PROVIDER_LABELS = [
 ]
 
 
+def _make_row_label(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setObjectName("formLabel")
+    lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    lbl.setMinimumWidth(112)
+    return lbl
+
+
+def _make_status_label() -> QLabel:
+    lbl = QLabel("")
+    lbl.setWordWrap(True)
+    lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+    lbl.setContentsMargins(2, 2, 2, 4)
+    return lbl
+
+
 class SettingsDialog(QDialog):
     """One-screen Settings dialog: provider, model list, test, hotkey, and writing rules."""
 
     config_changed = Signal(dict)
+    quit_requested = Signal()
 
     def __init__(
         self,
@@ -1076,123 +1166,166 @@ class SettingsDialog(QDialog):
         self._hotkey_status_fn = hotkey_status_fn
 
         self.setWindowTitle("Diplomat Settings")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(540)
+        self.setStyleSheet(build_stylesheet(is_dark_mode()))
         self._build_ui()
         self._load_from_cfg()
         self.refresh_models()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 18, 20, 18)
-        root.setSpacing(12)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(14)
 
-        form = QFormLayout()
-        form.setSpacing(10)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(10)
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+
+        row = 0
 
         # 1. Provider dropdown
         self.provider_combo = QComboBox()
+        self.provider_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         for key, label in PROVIDER_LABELS:
             self.provider_combo.addItem(label, userData=key)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
-        form.addRow("Provider:", self.provider_combo)
+        grid.addWidget(_make_row_label("Provider:"), row, 0)
+        grid.addWidget(self.provider_combo, row, 1)
+        row += 1
 
-        # 2. Base URL + reachability status
-        url_col = QVBoxLayout()
-        url_col.setSpacing(4)
+        # 2. Server URL + reachability status in dedicated non-clipped rows
         self.base_url_edit = QLineEdit()
         self.base_url_edit.setPlaceholderText("http://localhost:11434/v1")
+        self.base_url_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.base_url_edit.editingFinished.connect(self._on_base_url_edited)
-        url_col.addWidget(self.base_url_edit)
+        grid.addWidget(_make_row_label("Server URL:"), row, 0)
+        grid.addWidget(self.base_url_edit, row, 1)
+        row += 1
 
-        self.server_status_label = QLabel("")
-        self.server_status_label.setWordWrap(True)
-        url_col.addWidget(self.server_status_label)
+        self.server_status_label = _make_status_label()
+        grid.addWidget(self.server_status_label, row, 1)
+        row += 1
 
-        self.remote_url_warn = QLabel("")
-        self.remote_url_warn.setStyleSheet("color: #d97706; font-size: 11px;")
-        self.remote_url_warn.setWordWrap(True)
+        self.remote_url_warn = _make_status_label()
+        self.remote_url_warn.setStyleSheet("color: #f59e0b; font-size: 12px;")
         self.remote_url_warn.setVisible(False)
-        url_col.addWidget(self.remote_url_warn)
-        form.addRow("Server URL:", url_col)
+        grid.addWidget(self.remote_url_warn, row, 1)
+        row += 1
 
-        # 3. Optional API key (shown for 'other' or when already set)
+        # 3. Optional API key
         self.api_key_edit = QLineEdit()
         self.api_key_edit.setPlaceholderText("Optional (only needed for authenticated servers)")
         self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.api_key_edit.editingFinished.connect(self._on_api_key_edited)
-        form.addRow("API Key:", self.api_key_edit)
+        grid.addWidget(_make_row_label("API Key:"), row, 0)
+        grid.addWidget(self.api_key_edit, row, 1)
+        row += 1
 
         # 4. Model dropdown + Refresh + empty-model copyable hint
-        model_col = QVBoxLayout()
-        model_col.setSpacing(4)
         model_row = QHBoxLayout()
+        model_row.setContentsMargins(0, 0, 0, 0)
+        model_row.setSpacing(8)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
+        self.model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.model_combo.currentTextChanged.connect(self._on_model_changed)
         model_row.addWidget(self.model_combo, 1)
 
         self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setMinimumWidth(88)
         self.refresh_btn.clicked.connect(self.refresh_models)
         model_row.addWidget(self.refresh_btn)
-        model_col.addLayout(model_row)
+        grid.addWidget(_make_row_label("Model:"), row, 0)
+        grid.addLayout(model_row, row, 1)
+        row += 1
 
         self.model_hint_box = QLineEdit("ollama pull qwen2.5:7b-instruct")
         self.model_hint_box.setReadOnly(True)
+        self.model_hint_box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.model_hint_box.setToolTip("No models found — copy and run this command in Terminal")
         self.model_hint_box.setVisible(False)
-        model_col.addWidget(self.model_hint_box)
-        form.addRow("Model:", model_col)
+        grid.addWidget(self.model_hint_box, row, 1)
+        row += 1
 
         # 5. Test connection button + result
-        test_col = QVBoxLayout()
-        test_col.setSpacing(4)
         test_row = QHBoxLayout()
+        test_row.setContentsMargins(0, 0, 0, 0)
         self.test_btn = QPushButton("Test Model")
+        self.test_btn.setMinimumWidth(120)
         self.test_btn.clicked.connect(self.run_test_connection)
         test_row.addWidget(self.test_btn)
         test_row.addStretch(1)
-        test_col.addLayout(test_row)
+        grid.addWidget(_make_row_label("Test:"), row, 0)
+        grid.addLayout(test_row, row, 1)
+        row += 1
 
-        self.test_result_label = QLabel("")
-        self.test_result_label.setWordWrap(True)
+        self.test_result_label = _make_status_label()
         self.test_result_label.setVisible(False)
-        test_col.addWidget(self.test_result_label)
-        form.addRow("Test:", test_col)
+        grid.addWidget(self.test_result_label, row, 1)
+        row += 1
 
         # 6. Hotkey recorder + Default button
-        hotkey_col = QVBoxLayout()
-        hotkey_col.setSpacing(4)
         hotkey_row = QHBoxLayout()
+        hotkey_row.setContentsMargins(0, 0, 0, 0)
+        hotkey_row.setSpacing(8)
         self.hotkey_recorder = HotkeyRecorder()
         self.hotkey_recorder.hotkey_changed.connect(self._on_hotkey_changed)
         hotkey_row.addWidget(self.hotkey_recorder, 1)
 
         self.reset_hotkey_btn = QPushButton("Default (⌥ Space)")
+        self.reset_hotkey_btn.setMinimumWidth(140)
         self.reset_hotkey_btn.clicked.connect(lambda: self._on_hotkey_changed("option+space"))
         hotkey_row.addWidget(self.reset_hotkey_btn)
-        hotkey_col.addLayout(hotkey_row)
+        grid.addWidget(_make_row_label("Global Hotkey:"), row, 0)
+        grid.addLayout(hotkey_row, row, 1)
+        row += 1
 
-        self.hotkey_status_label = QLabel("")
-        self.hotkey_status_label.setWordWrap(True)
+        self.hotkey_status_label = _make_status_label()
         self.hotkey_status_label.setVisible(False)
-        hotkey_col.addWidget(self.hotkey_status_label)
-        form.addRow("Global Hotkey:", hotkey_col)
+        grid.addWidget(self.hotkey_status_label, row, 1)
+        row += 1
 
         # 7. Writing rules toggle
         self.slop_rules_check = QCheckBox("Use compact no-ai-slop writing rules")
         self.slop_rules_check.toggled.connect(self._on_slop_rules_toggled)
-        form.addRow("Writing Rules:", self.slop_rules_check)
+        grid.addWidget(_make_row_label("Writing Rules:"), row, 0)
+        grid.addWidget(self.slop_rules_check, row, 1)
+        row += 1
 
-        root.addLayout(form)
+        root.addLayout(grid)
 
-        # Footer Close button
+        divider = QFrame()
+        divider.setObjectName("divider")
+        root.addWidget(divider)
+
+        # Footer: Quit Diplomat (left) | Done (right)
         footer = QHBoxLayout()
+        footer.setContentsMargins(0, 4, 0, 0)
+        self.quit_app_btn = QPushButton("Quit Diplomat")
+        self.quit_app_btn.setObjectName("dangerButton")
+        self.quit_app_btn.setToolTip("Stop the Diplomat background process and exit (⌘Q)")
+        self.quit_app_btn.clicked.connect(self._on_quit_clicked)
+        footer.addWidget(self.quit_app_btn)
+
         footer.addStretch(1)
+
         self.close_btn = QPushButton("Done")
+        self.close_btn.setObjectName("primaryButton")
+        self.close_btn.setMinimumWidth(96)
         self.close_btn.setDefault(True)
         self.close_btn.clicked.connect(self.accept)
         footer.addWidget(self.close_btn)
         root.addLayout(footer)
+
+        quit_sc = QShortcut(QKeySequence("Ctrl+Q"), self)
+        quit_sc.activated.connect(self._on_quit_clicked)
+
+    def _on_quit_clicked(self) -> None:
+        self.quit_requested.emit()
+        self.close()
 
     def _load_from_cfg(self) -> None:
         provider = self.cfg.get("provider", "ollama")
@@ -1233,6 +1366,7 @@ class SettingsDialog(QDialog):
             self.remote_url_warn.setVisible(True)
         else:
             self.remote_url_warn.setVisible(False)
+        self.adjustSize()
 
     def _on_provider_changed(self) -> None:
         provider = self.provider_combo.currentData() or "ollama"
@@ -1271,12 +1405,13 @@ class SettingsDialog(QDialog):
         if self._hotkey_status_fn is not None:
             ok, err = self._hotkey_status_fn(spec)
             if ok:
-                self.hotkey_status_label.setStyleSheet("color: #28cd41; font-size: 11px;")
+                self.hotkey_status_label.setStyleSheet("color: #30d158; font-size: 12px;")
                 self.hotkey_status_label.setText(f"● Hotkey '{spec}' active")
             else:
-                self.hotkey_status_label.setStyleSheet("color: #ff453a; font-size: 11px;")
+                self.hotkey_status_label.setStyleSheet("color: #ff453a; font-size: 12px;")
                 self.hotkey_status_label.setText(err or f"● Could not register '{spec}'")
             self.hotkey_status_label.setVisible(True)
+            self.adjustSize()
 
     def _on_slop_rules_toggled(self, checked: bool) -> None:
         self.cfg["slop_rules"] = bool(checked)
@@ -1293,6 +1428,7 @@ class SettingsDialog(QDialog):
             self.server_status_label.setStyleSheet("color: #ff453a; font-size: 12px;")
             self.server_status_label.setText(f"● {exc}")
             self.model_hint_box.setVisible(False)
+            self.adjustSize()
             return []
 
         self.model_combo.blockSignals(True)
@@ -1301,7 +1437,7 @@ class SettingsDialog(QDialog):
             self.model_combo.addItem(m)
 
         if models:
-            self.server_status_label.setStyleSheet("color: #28cd41; font-size: 12px;")
+            self.server_status_label.setStyleSheet("color: #30d158; font-size: 12px;")
             self.server_status_label.setText(f"● Connected ({len(models)} model{'s' if len(models) != 1 else ''} available)")
             self.model_hint_box.setVisible(False)
             chosen = current_model if current_model in models else models[0]
@@ -1318,6 +1454,7 @@ class SettingsDialog(QDialog):
             self.server_status_label.setStyleSheet("color: #f59e0b; font-size: 12px;")
             self.server_status_label.setText("● Server reachable, but no models are installed. Pull one in Terminal:")
             self.model_hint_box.setVisible(True)
+        self.adjustSize()
         return models
 
     def run_test_connection(self) -> bool:
@@ -1329,6 +1466,7 @@ class SettingsDialog(QDialog):
         if not model:
             self.test_result_label.setStyleSheet("color: #ff453a; font-size: 12px;")
             self.test_result_label.setText("Choose or pull a model first.")
+            self.adjustSize()
             return False
 
         try:
@@ -1336,8 +1474,10 @@ class SettingsDialog(QDialog):
         except llm.LLMError as exc:
             self.test_result_label.setStyleSheet("color: #ff453a; font-size: 12px;")
             self.test_result_label.setText(f"Test failed: {exc}")
+            self.adjustSize()
             return False
 
-        self.test_result_label.setStyleSheet("color: #28cd41; font-size: 12px;")
+        self.test_result_label.setStyleSheet("color: #30d158; font-size: 12px;")
         self.test_result_label.setText(f"✓ ({elapsed:.2f}s) {reply}")
+        self.adjustSize()
         return True

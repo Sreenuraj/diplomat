@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import os
+import signal
 import sys
 from typing import Callable
 
-from PySide6.QtCore import QObject, QRectF, Qt, Signal
+from PySide6.QtCore import QObject, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -149,9 +151,11 @@ class DiplomatApp(QObject):
         self.is_first_run = not resolved_path.exists()
         self.cfg = cfg if cfg is not None else config_mod.load(config_path)
         self.settings_dialog: SettingsDialog | None = None
+        self._stopped = False
 
         self.popup = PopupWindow(cfg=self.cfg, config_path=config_path)
         self.popup.settings_requested.connect(self.open_settings)
+        self.popup.quit_requested.connect(self.shutdown)
         self.popup.config_changed.connect(self._on_config_changed)
 
         self.hotkey = HotkeyManager(self.popup.toggle_popup)
@@ -177,7 +181,7 @@ class DiplomatApp(QObject):
         settings_action.triggered.connect(self.open_settings)
 
         menu.addSeparator()
-        quit_action = menu.addAction("Quit Diplomat")
+        quit_action = menu.addAction("Quit Diplomat (⌘Q)")
         quit_action.triggered.connect(self.shutdown)
 
         tray.setContextMenu(menu)
@@ -221,17 +225,39 @@ class DiplomatApp(QObject):
             parent=self.popup if self.popup.isVisible() else None,
         )
         dlg.config_changed.connect(self._on_config_changed)
+        dlg.quit_requested.connect(self.shutdown)
         self.settings_dialog = dlg
         dlg.show()
         dlg.raise_()
         dlg.activateWindow()
         return dlg
 
+    def print_startup_banner(self) -> None:
+        resolved_path = self.config_path or config_mod.config_path()
+        hotkey_spec = self.cfg.get("hotkey", config_mod.DEFAULTS["hotkey"])
+        hotkey_label = format_hotkey_label(hotkey_spec)
+        model = self.cfg.get("model") or "(auto-detect on first request)"
+        print(
+            f"Diplomat running (PID {os.getpid()})\n"
+            f"  Provider : {self.cfg.get('provider')} ({self.cfg.get('base_url')})\n"
+            f"  Model    : {model}\n"
+            f"  Hotkey   : {hotkey_label} ({hotkey_spec})\n"
+            f"  Config   : {resolved_path}\n"
+            f"Stop with Ctrl+C in this terminal, ⌘Q, or the 'Quit' button in the UI.",
+            flush=True,
+        )
+
     def shutdown(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
         self.hotkey.stop()
+        if self.settings_dialog is not None:
+            self.settings_dialog.close()
         if self.tray is not None:
             self.tray.hide()
         self.popup.close()
+        print(f"\nDiplomat stopped (PID {os.getpid()}).", flush=True)
         self.app.quit()
 
 
@@ -247,6 +273,20 @@ def main(argv: list[str] | None = None) -> int:
 
     controller = DiplomatApp(app, enable_hotkey=not args.no_hotkey)
     app.aboutToQuit.connect(controller.hotkey.stop)
+
+    # Periodic heartbeat so Python runs signal handlers (Ctrl+C / SIGINT) while inside Qt's C++ loop
+    sig_timer = QTimer(app)
+    sig_timer.setInterval(150)
+    sig_timer.timeout.connect(lambda: None)
+    sig_timer.start()
+
+    def _handle_sig(_signum, _frame) -> None:
+        controller.shutdown()
+
+    signal.signal(signal.SIGINT, _handle_sig)
+    signal.signal(signal.SIGTERM, _handle_sig)
+
+    controller.print_startup_banner()
 
     if not args.no_popup:
         controller.popup.show_popup()

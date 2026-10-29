@@ -434,6 +434,29 @@ def test_settings_dialog_end_to_end(tmp_path):
     assert saved["hotkey"] == "cmd+shift+space"
     assert saved["slop_rules"] is False
 
+    # Quit button emits quit_requested
+    quit_fired = []
+    dlg.quit_requested.connect(lambda: quit_fired.append(True))
+    dlg.quit_app_btn.click()
+    assert quit_fired == [True]
+
+
+def test_startup_banner_and_popup_quit(tmp_path, capsys):
+    from PySide6.QtWidgets import QApplication
+    from diplomat import main as main_mod
+
+    app = QApplication.instance() or QApplication([])
+    cfg_file = tmp_path / "config.json"
+    controller = main_mod.DiplomatApp(app, config_path=cfg_file, enable_hotkey=False)
+    controller.print_startup_banner()
+    out = capsys.readouterr().out
+    assert "Diplomat running (PID" in out
+    assert "Ctrl+C" in out
+
+    controller.popup.quit_btn.click()
+    out2 = capsys.readouterr().out
+    assert "Diplomat stopped (PID" in out2
+
 
 def test_launcher_scripts_exist_and_executable():
     import os
