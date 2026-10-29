@@ -361,3 +361,85 @@ def test_popup_error_and_retry_state(tmp_path):
     assert "Settings" in popup.error_label.text()
     assert not popup.open_settings_inline_btn.isHidden()
     assert popup.generate_btn.text() == "Retry"
+
+
+# ---- step 3 & 4: settings dialog, hotkey recorder, launcher scripts
+
+def test_keyevent_to_hotkey_spec():
+    from PySide6.QtCore import Qt
+    from diplomat import ui
+
+    assert ui.keyevent_to_hotkey_spec(Qt.Key.Key_Space, Qt.KeyboardModifier.AltModifier) == "option+space"
+    assert (
+        ui.keyevent_to_hotkey_spec(
+            Qt.Key.Key_D,
+            Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier,
+        )
+        == "shift+cmd+d"
+    )
+    assert ui.keyevent_to_hotkey_spec(Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier) is None
+    assert ui.keyevent_to_hotkey_spec(Qt.Key.Key_Alt, Qt.KeyboardModifier.AltModifier) is None
+
+
+def test_settings_dialog_end_to_end(tmp_path):
+    from PySide6.QtWidgets import QApplication
+    from diplomat import ui
+
+    _ = QApplication.instance() or QApplication([])
+    cfg_file = tmp_path / "config.json"
+    cfg = config.load(cfg_file)
+
+    models_state = ["qwen2.5:7b-instruct", "llama3.1:8b"]
+
+    def fake_list_models(base_url, api_key):
+        return list(models_state)
+
+    def fake_test_connection(base_url, model, api_key):
+        return (f"Could you please send me the file? ({model})", 0.42)
+
+    dlg = ui.SettingsDialog(
+        cfg=cfg,
+        config_path=cfg_file,
+        list_models_fn=fake_list_models,
+        test_connection_fn=fake_test_connection,
+        hotkey_status_fn=lambda spec: (True, None),
+    )
+
+    # First open auto-picks the first installed model and shows Connected status
+    assert "Connected" in dlg.server_status_label.text()
+    assert dlg.model_combo.currentText() == "qwen2.5:7b-instruct"
+    assert config.load(cfg_file)["model"] == "qwen2.5:7b-instruct"
+    assert dlg.model_hint_box.isHidden()
+
+    # Switching provider to LM Studio updates base_url immediately
+    dlg.provider_combo.setCurrentIndex(1)  # lmstudio
+    assert dlg.base_url_edit.text() == config.PROVIDERS["lmstudio"]
+    assert config.load(cfg_file)["provider"] == "lmstudio"
+
+    # Test connection displays reply and elapsed time
+    assert dlg.run_test_connection() is True
+    assert "0.42s" in dlg.test_result_label.text()
+
+    # Empty model list shows copyable ollama pull hint
+    models_state.clear()
+    dlg.cfg["model"] = ""
+    dlg.refresh_models()
+    assert not dlg.model_hint_box.isHidden()
+    assert "ollama pull" in dlg.model_hint_box.text()
+
+    # Hotkey & writing rules apply immediately
+    dlg._on_hotkey_changed("cmd+shift+space")
+    dlg.slop_rules_check.setChecked(False)
+    saved = config.load(cfg_file)
+    assert saved["hotkey"] == "cmd+shift+space"
+    assert saved["slop_rules"] is False
+
+
+def test_launcher_scripts_exist_and_executable():
+    import os
+
+    root = Path(__file__).resolve().parents[1]
+    for name in ("run.sh", "Diplomat.command"):
+        path = root / name
+        assert path.exists(), f"{name} is missing"
+        assert os.access(path, os.X_OK), f"{name} is not executable"

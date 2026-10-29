@@ -1,4 +1,4 @@
-"""Popup window (Step 2) and Settings hook for Diplomat."""
+"""Popup window and Settings dialog for Diplomat."""
 
 from __future__ import annotations
 
@@ -24,12 +24,16 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QFormLayout,
     QFrame,
     QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QSlider,
@@ -932,3 +936,408 @@ class PopupWindow(QWidget):
         if event.type() in (QEvent.Type.PaletteChange, QEvent.Type.ApplicationPaletteChange):
             self.apply_theme()
         super().changeEvent(event)
+
+
+# ---------------------------------------------------------------- Step 3: Hotkey recorder & Settings dialog
+
+_MODIFIER_KEYS = {
+    Qt.Key.Key_Control,
+    Qt.Key.Key_Shift,
+    Qt.Key.Key_Alt,
+    Qt.Key.Key_Meta,
+    Qt.Key.Key_Super_L,
+    Qt.Key.Key_Super_R,
+}
+
+_SPECIAL_KEYS = {
+    Qt.Key.Key_Space: "space",
+    Qt.Key.Key_Return: "return",
+    Qt.Key.Key_Enter: "enter",
+    Qt.Key.Key_Tab: "tab",
+}
+
+
+def keyevent_to_hotkey_spec(key: int, modifiers: Qt.KeyboardModifier) -> str | None:
+    """Convert a Qt key + modifiers into a config hotkey string like 'option+space'.
+
+    Note: on macOS Qt swaps Control and Meta by default:
+    Qt.ControlModifier is ⌘ (Command), Qt.MetaModifier is ⌃ (Control), Qt.AltModifier is ⌥ (Option).
+    """
+    if key in _MODIFIER_KEYS or key == Qt.Key.Key_unknown:
+        return None
+
+    mods: list[str] = []
+    if modifiers & Qt.KeyboardModifier.MetaModifier:
+        mods.append("ctrl")
+    if modifiers & Qt.KeyboardModifier.AltModifier:
+        mods.append("option")
+    if modifiers & Qt.KeyboardModifier.ShiftModifier:
+        mods.append("shift")
+    if modifiers & Qt.KeyboardModifier.ControlModifier:
+        mods.append("cmd")
+
+    if not mods:
+        return None
+
+    if key in _SPECIAL_KEYS:
+        key_name = _SPECIAL_KEYS[key]
+    elif Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
+        key_name = chr(key).lower()
+    elif Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
+        key_name = chr(key)
+    else:
+        seq = QKeySequence(key).toString().lower().strip()
+        if not seq or len(seq) > 6:
+            return None
+        key_name = seq
+
+    return "+".join([*mods, key_name])
+
+
+class HotkeyRecorder(QPushButton):
+    """Clickable button that records a modifier+key shortcut."""
+
+    hotkey_changed = Signal(str)
+
+    def __init__(self, initial: str = "option+space", parent: QWidget | None = None):
+        super().__init__(parent)
+        self._hotkey = initial or "option+space"
+        self._recording = False
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.clicked.connect(self._start_recording)
+        self._refresh_text()
+
+    def hotkey(self) -> str:
+        return self._hotkey
+
+    def set_hotkey(self, spec: str) -> None:
+        self._hotkey = spec or "option+space"
+        self._recording = False
+        self._refresh_text()
+
+    def _start_recording(self) -> None:
+        self._recording = True
+        self.setText("Press shortcut… (Esc to cancel)")
+        self.setFocus()
+
+    def _refresh_text(self) -> None:
+        self.setText(self._hotkey)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        if not self._recording:
+            super().keyPressEvent(event)
+            return
+        if event.key() == Qt.Key.Key_Escape:
+            self._recording = False
+            self._refresh_text()
+            event.accept()
+            return
+        spec = keyevent_to_hotkey_spec(event.key(), event.modifiers())
+        if spec:
+            self._hotkey = spec
+            self._recording = False
+            self._refresh_text()
+            self.hotkey_changed.emit(spec)
+        event.accept()
+
+    def focusOutEvent(self, event) -> None:
+        if self._recording:
+            self._recording = False
+            self._refresh_text()
+        super().focusOutEvent(event)
+
+
+PROVIDER_LABELS = [
+    ("ollama", "Ollama (localhost:11434)"),
+    ("lmstudio", "LM Studio (localhost:1234)"),
+    ("other", "Other (OpenAI-compatible)"),
+]
+
+
+class SettingsDialog(QDialog):
+    """One-screen Settings dialog: provider, model list, test, hotkey, and writing rules."""
+
+    config_changed = Signal(dict)
+
+    def __init__(
+        self,
+        cfg: dict | None = None,
+        config_path=None,
+        list_models_fn: Callable[[str, str | None], list[str]] | None = None,
+        test_connection_fn: Callable[[str, str, str | None], tuple[str, float]] | None = None,
+        hotkey_status_fn: Callable[[str], tuple[bool, str | None]] | None = None,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self._config_path = config_path
+        self.cfg = cfg if cfg is not None else config_mod.load(config_path)
+        self._list_models_fn = list_models_fn or (lambda url, key: llm.list_models(url, key))
+        self._test_connection_fn = test_connection_fn or llm.test_connection
+        self._hotkey_status_fn = hotkey_status_fn
+
+        self.setWindowTitle("Diplomat Settings")
+        self.setMinimumWidth(480)
+        self._build_ui()
+        self._load_from_cfg()
+        self.refresh_models()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(12)
+
+        form = QFormLayout()
+        form.setSpacing(10)
+
+        # 1. Provider dropdown
+        self.provider_combo = QComboBox()
+        for key, label in PROVIDER_LABELS:
+            self.provider_combo.addItem(label, userData=key)
+        self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
+        form.addRow("Provider:", self.provider_combo)
+
+        # 2. Base URL + reachability status
+        url_col = QVBoxLayout()
+        url_col.setSpacing(4)
+        self.base_url_edit = QLineEdit()
+        self.base_url_edit.setPlaceholderText("http://localhost:11434/v1")
+        self.base_url_edit.editingFinished.connect(self._on_base_url_edited)
+        url_col.addWidget(self.base_url_edit)
+
+        self.server_status_label = QLabel("")
+        self.server_status_label.setWordWrap(True)
+        url_col.addWidget(self.server_status_label)
+
+        self.remote_url_warn = QLabel("")
+        self.remote_url_warn.setStyleSheet("color: #d97706; font-size: 11px;")
+        self.remote_url_warn.setWordWrap(True)
+        self.remote_url_warn.setVisible(False)
+        url_col.addWidget(self.remote_url_warn)
+        form.addRow("Server URL:", url_col)
+
+        # 3. Optional API key (shown for 'other' or when already set)
+        self.api_key_edit = QLineEdit()
+        self.api_key_edit.setPlaceholderText("Optional (only needed for authenticated servers)")
+        self.api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key_edit.editingFinished.connect(self._on_api_key_edited)
+        form.addRow("API Key:", self.api_key_edit)
+
+        # 4. Model dropdown + Refresh + empty-model copyable hint
+        model_col = QVBoxLayout()
+        model_col.setSpacing(4)
+        model_row = QHBoxLayout()
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.currentTextChanged.connect(self._on_model_changed)
+        model_row.addWidget(self.model_combo, 1)
+
+        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.clicked.connect(self.refresh_models)
+        model_row.addWidget(self.refresh_btn)
+        model_col.addLayout(model_row)
+
+        self.model_hint_box = QLineEdit("ollama pull qwen2.5:7b-instruct")
+        self.model_hint_box.setReadOnly(True)
+        self.model_hint_box.setToolTip("No models found — copy and run this command in Terminal")
+        self.model_hint_box.setVisible(False)
+        model_col.addWidget(self.model_hint_box)
+        form.addRow("Model:", model_col)
+
+        # 5. Test connection button + result
+        test_col = QVBoxLayout()
+        test_col.setSpacing(4)
+        test_row = QHBoxLayout()
+        self.test_btn = QPushButton("Test Model")
+        self.test_btn.clicked.connect(self.run_test_connection)
+        test_row.addWidget(self.test_btn)
+        test_row.addStretch(1)
+        test_col.addLayout(test_row)
+
+        self.test_result_label = QLabel("")
+        self.test_result_label.setWordWrap(True)
+        self.test_result_label.setVisible(False)
+        test_col.addWidget(self.test_result_label)
+        form.addRow("Test:", test_col)
+
+        # 6. Hotkey recorder + Default button
+        hotkey_col = QVBoxLayout()
+        hotkey_col.setSpacing(4)
+        hotkey_row = QHBoxLayout()
+        self.hotkey_recorder = HotkeyRecorder()
+        self.hotkey_recorder.hotkey_changed.connect(self._on_hotkey_changed)
+        hotkey_row.addWidget(self.hotkey_recorder, 1)
+
+        self.reset_hotkey_btn = QPushButton("Default (⌥ Space)")
+        self.reset_hotkey_btn.clicked.connect(lambda: self._on_hotkey_changed("option+space"))
+        hotkey_row.addWidget(self.reset_hotkey_btn)
+        hotkey_col.addLayout(hotkey_row)
+
+        self.hotkey_status_label = QLabel("")
+        self.hotkey_status_label.setWordWrap(True)
+        self.hotkey_status_label.setVisible(False)
+        hotkey_col.addWidget(self.hotkey_status_label)
+        form.addRow("Global Hotkey:", hotkey_col)
+
+        # 7. Writing rules toggle
+        self.slop_rules_check = QCheckBox("Use compact no-ai-slop writing rules")
+        self.slop_rules_check.toggled.connect(self._on_slop_rules_toggled)
+        form.addRow("Writing Rules:", self.slop_rules_check)
+
+        root.addLayout(form)
+
+        # Footer Close button
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        self.close_btn = QPushButton("Done")
+        self.close_btn.setDefault(True)
+        self.close_btn.clicked.connect(self.accept)
+        footer.addWidget(self.close_btn)
+        root.addLayout(footer)
+
+    def _load_from_cfg(self) -> None:
+        provider = self.cfg.get("provider", "ollama")
+        idx = self.provider_combo.findData(provider)
+        self.provider_combo.blockSignals(True)
+        self.provider_combo.setCurrentIndex(max(0, idx))
+        self.provider_combo.blockSignals(False)
+
+        base_url = self.cfg.get("base_url") or config_mod.PROVIDERS.get(provider) or config_mod.DEFAULTS["base_url"]
+        self.base_url_edit.setText(base_url)
+        self._update_remote_warning(base_url)
+
+        self.api_key_edit.setText(self.cfg.get("api_key") or "")
+
+        model = self.cfg.get("model", "")
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        if model:
+            self.model_combo.addItem(model)
+            self.model_combo.setCurrentText(model)
+        self.model_combo.blockSignals(False)
+
+        self.hotkey_recorder.set_hotkey(self.cfg.get("hotkey", "option+space"))
+        self.slop_rules_check.blockSignals(True)
+        self.slop_rules_check.setChecked(bool(self.cfg.get("slop_rules", True)))
+        self.slop_rules_check.blockSignals(False)
+
+    def _save_and_emit(self) -> None:
+        try:
+            config_mod.save(self.cfg, self._config_path)
+        except OSError:
+            pass
+        self.config_changed.emit(self.cfg)
+
+    def _update_remote_warning(self, url: str) -> None:
+        if url and not config_mod.is_local_url(url):
+            self.remote_url_warn.setText("Warning: this URL is not localhost. Your text will be sent to this server.")
+            self.remote_url_warn.setVisible(True)
+        else:
+            self.remote_url_warn.setVisible(False)
+
+    def _on_provider_changed(self) -> None:
+        provider = self.provider_combo.currentData() or "ollama"
+        self.cfg["provider"] = provider
+        preset_url = config_mod.PROVIDERS.get(provider)
+        if preset_url:
+            self.base_url_edit.setText(preset_url)
+            self.cfg["base_url"] = preset_url
+        self._update_remote_warning(self.base_url_edit.text().strip())
+        self._save_and_emit()
+        self.refresh_models()
+
+    def _on_base_url_edited(self) -> None:
+        url = self.base_url_edit.text().strip()
+        if not url:
+            return
+        self.cfg["base_url"] = url
+        self._update_remote_warning(url)
+        self._save_and_emit()
+        self.refresh_models()
+
+    def _on_api_key_edited(self) -> None:
+        key = self.api_key_edit.text().strip() or None
+        self.cfg["api_key"] = key
+        self._save_and_emit()
+
+    def _on_model_changed(self, text: str) -> None:
+        model = text.strip()
+        self.cfg["model"] = model
+        self._save_and_emit()
+
+    def _on_hotkey_changed(self, spec: str) -> None:
+        self.hotkey_recorder.set_hotkey(spec)
+        self.cfg["hotkey"] = spec
+        self._save_and_emit()
+        if self._hotkey_status_fn is not None:
+            ok, err = self._hotkey_status_fn(spec)
+            if ok:
+                self.hotkey_status_label.setStyleSheet("color: #28cd41; font-size: 11px;")
+                self.hotkey_status_label.setText(f"● Hotkey '{spec}' active")
+            else:
+                self.hotkey_status_label.setStyleSheet("color: #ff453a; font-size: 11px;")
+                self.hotkey_status_label.setText(err or f"● Could not register '{spec}'")
+            self.hotkey_status_label.setVisible(True)
+
+    def _on_slop_rules_toggled(self, checked: bool) -> None:
+        self.cfg["slop_rules"] = bool(checked)
+        self._save_and_emit()
+
+    def refresh_models(self) -> list[str]:
+        base_url = self.base_url_edit.text().strip() or config_mod.DEFAULTS["base_url"]
+        api_key = self.api_key_edit.text().strip() or None
+        current_model = self.cfg.get("model", "").strip()
+
+        try:
+            models = self._list_models_fn(base_url, api_key)
+        except llm.LLMError as exc:
+            self.server_status_label.setStyleSheet("color: #ff453a; font-size: 12px;")
+            self.server_status_label.setText(f"● {exc}")
+            self.model_hint_box.setVisible(False)
+            return []
+
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        for m in models:
+            self.model_combo.addItem(m)
+
+        if models:
+            self.server_status_label.setStyleSheet("color: #28cd41; font-size: 12px;")
+            self.server_status_label.setText(f"● Connected ({len(models)} model{'s' if len(models) != 1 else ''} available)")
+            self.model_hint_box.setVisible(False)
+            chosen = current_model if current_model in models else models[0]
+            self.model_combo.setCurrentText(chosen)
+            self.model_combo.blockSignals(False)
+            if chosen != current_model:
+                self.cfg["model"] = chosen
+                self._save_and_emit()
+        else:
+            if current_model:
+                self.model_combo.addItem(current_model)
+                self.model_combo.setCurrentText(current_model)
+            self.model_combo.blockSignals(False)
+            self.server_status_label.setStyleSheet("color: #f59e0b; font-size: 12px;")
+            self.server_status_label.setText("● Server reachable, but no models are installed. Pull one in Terminal:")
+            self.model_hint_box.setVisible(True)
+        return models
+
+    def run_test_connection(self) -> bool:
+        base_url = self.base_url_edit.text().strip() or config_mod.DEFAULTS["base_url"]
+        model = self.model_combo.currentText().strip()
+        api_key = self.api_key_edit.text().strip() or None
+
+        self.test_result_label.setVisible(True)
+        if not model:
+            self.test_result_label.setStyleSheet("color: #ff453a; font-size: 12px;")
+            self.test_result_label.setText("Choose or pull a model first.")
+            return False
+
+        try:
+            reply, elapsed = self._test_connection_fn(base_url, model, api_key)
+        except llm.LLMError as exc:
+            self.test_result_label.setStyleSheet("color: #ff453a; font-size: 12px;")
+            self.test_result_label.setText(f"Test failed: {exc}")
+            return False
+
+        self.test_result_label.setStyleSheet("color: #28cd41; font-size: 12px;")
+        self.test_result_label.setText(f"✓ ({elapsed:.2f}s) {reply}")
+        return True

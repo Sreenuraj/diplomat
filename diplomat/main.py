@@ -8,10 +8,10 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, QRectF, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import config as config_mod
-from .ui import PopupWindow
+from .ui import PopupWindow, SettingsDialog
 
 _KEY_MAP = {
     "option": "<alt>",
@@ -145,7 +145,10 @@ class DiplomatApp(QObject):
         super().__init__()
         self.app = app
         self.config_path = config_path
+        resolved_path = config_path or config_mod.config_path()
+        self.is_first_run = not resolved_path.exists()
         self.cfg = cfg if cfg is not None else config_mod.load(config_path)
+        self.settings_dialog: SettingsDialog | None = None
 
         self.popup = PopupWindow(cfg=self.cfg, config_path=config_path)
         self.popup.settings_requested.connect(self.open_settings)
@@ -193,20 +196,36 @@ class DiplomatApp(QObject):
         new_hotkey = cfg.get("hotkey", config_mod.DEFAULTS["hotkey"])
         if new_hotkey != self.hotkey.current_spec and self.hotkey.current_spec:
             self.hotkey.start(new_hotkey)
-            if self.toggle_action is not None:
-                self.toggle_action.setText(f"Show / Hide Diplomat ({format_hotkey_label(new_hotkey)})")
+        if self.toggle_action is not None:
+            self.toggle_action.setText(f"Show / Hide Diplomat ({format_hotkey_label(new_hotkey)})")
         self.cfg = cfg
+        self.popup.reload_config(cfg)
 
-    def open_settings(self) -> None:
-        """Open Settings (Step 3 replaces this fallback with the full Settings dialog)."""
-        QMessageBox.information(
-            self.popup,
-            "Diplomat Settings",
-            f"Config file: {self.config_path or config_mod.config_path()}\n"
-            f"Provider: {self.cfg.get('provider')} ({self.cfg.get('base_url')})\n"
-            f"Model: {self.cfg.get('model') or '(auto-detect)'}\n"
-            f"Hotkey: {self.cfg.get('hotkey')}",
+    def _rebind_hotkey(self, spec: str) -> tuple[bool, str | None]:
+        ok = self.hotkey.start(spec)
+        if self.toggle_action is not None:
+            self.toggle_action.setText(f"Show / Hide Diplomat ({format_hotkey_label(spec)})")
+        return ok, self.hotkey.last_error
+
+    def open_settings(self) -> SettingsDialog:
+        """Open the one-screen Settings dialog; changes apply immediately."""
+        if self.settings_dialog is not None and self.settings_dialog.isVisible():
+            self.settings_dialog.raise_()
+            self.settings_dialog.activateWindow()
+            return self.settings_dialog
+
+        dlg = SettingsDialog(
+            cfg=self.cfg,
+            config_path=self.config_path,
+            hotkey_status_fn=self._rebind_hotkey,
+            parent=self.popup if self.popup.isVisible() else None,
         )
+        dlg.config_changed.connect(self._on_config_changed)
+        self.settings_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+        return dlg
 
     def shutdown(self) -> None:
         self.hotkey.stop()
@@ -231,6 +250,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.no_popup:
         controller.popup.show_popup()
+    if controller.is_first_run or not controller.cfg.get("model"):
+        controller.open_settings()
 
     return app.exec()
 
