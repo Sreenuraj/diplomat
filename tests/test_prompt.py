@@ -62,7 +62,7 @@ def test_user_message_with_and_without_context():
     withctx = prompt.build_user_message("hello", "Can you send it?")
     assert withctx.startswith("<context>Can you send it?</context>\n<draft>hello</draft>")
     assert withctx.endswith("No preface, no quotes, no explanation.")
-    assert "draft's language" in withctx
+    assert "English" in prompt.build_system_prompt(SLACK, DEFAULT_SLIDERS)
     assert "<context>" not in prompt.build_user_message("hello", "   ")
 
 
@@ -246,3 +246,12 @@ def test_is_local_url():
 def test_em_dash_replaced_in_code():
     assert prompt.clean_output("Ship it \u2014 today.") == "Ship it, today."
     assert "\u2014" not in prompt.clean_output("a\u2014b")
+
+
+def test_default_model_is_not_machine_specific():
+    assert config.DEFAULTS["model"] == ""
+
+
+def test_config_path_env_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("DIPLOMAT_CONFIG", str(tmp_path / "x.json"))
+    assert config.config_path() == tmp_path / "x.json"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ DEFAULTS: dict = {
     "provider": "ollama",
     "base_url": PROVIDERS["ollama"],
     "api_key": None,
-    "model": "qwen2.5:7b-instruct",
+    "model": "",  # empty = not chosen yet; pick one in Settings (or the CLI picks an installed one)
     "hotkey": "option+space",
     "default_preset": "slack_office",
     "slop_rules": True,
@@ -41,7 +42,11 @@ def config_path() -> Path:
     override = os.environ.get("DIPLOMAT_CONFIG")
     if override:
         return Path(override)
-    return Path.home() / "Library" / "Application Support" / "Diplomat" / "config.json"
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "Diplomat" / "config.json"
 
 
 def _merge(base: dict, extra: dict) -> dict:

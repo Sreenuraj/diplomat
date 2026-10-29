@@ -19,8 +19,8 @@ need access to prod logs
 # 6. already professional
 Hi Maria, thank you for the update. I reviewed the proposal and have two questions about the timeline. Could we discuss them in tomorrow's sync?
 ---
-# 7. non-English (Spanish)
-oye, no puedo ir a la reunion de manana, tengo el medico a las 10. puedes pasarme las notas despues?
+# 7. slang and abbreviations (English only for now; other languages are Phase 2)
+yo cant make tmrws sync, got a dr appt at 10. can u send me the notes after? ty
 ---
 # 8. declining
 cant do the offsite in march, too busy w/ the launch. maybe june?
