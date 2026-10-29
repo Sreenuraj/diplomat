@@ -32,7 +32,7 @@ Type anything (rude, rushed, messy), press a hotkey, and get back a message you 
 ## Quick start
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/Sreenuraj/diplomat.git
 cd diplomat
 
 # Pull a local model if you haven't already, e.g. with Ollama:

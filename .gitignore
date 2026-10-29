@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 *.pyc
 .pytest_cache/
+.postqode/
+plan.md
+docs/plan.md
