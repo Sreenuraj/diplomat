@@ -26,6 +26,7 @@ DEFAULTS: dict = {
     "hotkey": "option+space",
     "default_preset": "slack_office",
     "slop_rules": True,
+    "tone_open": False,
     "sliders": {
         "formality": 50,
         "warmth": 50,

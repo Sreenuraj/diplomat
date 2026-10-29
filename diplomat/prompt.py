@@ -240,13 +240,15 @@ def clean_output(text: str, plain_text: bool = True) -> str:
     text = _PREFACE.sub("", text, count=1)
     text = _PREFACE_REWRITE.sub("", text, count=1).strip()
     for left, right in _QUOTE_PAIRS:
-        if len(text) >= 2 and text[0] == left and text[-1] == right and text.count(left) <= 2:
-            text = text[1:-1].strip()
-            break
+        if len(text) >= 2 and text[0] == left and text[-1] == right:
+            single_pair = text.count(left) == 2 if left == right else (text.count(left) == 1 and text.count(right) == 1)
+            if single_pair:
+                text = text[1:-1].strip()
+                break
     if plain_text:
         text = re.sub(r"\*\*(.+?)\*\*", r"\1", text, flags=re.DOTALL)
     # Em dashes are fixed in code: a model retry tends to drop facts.
-    text = re.sub(r"\s*\u2014\s*", ", ", text)
+    text = re.sub(r"[ \t]*\u2014[ \t]*", ", ", text)
     return text.strip()
 
 

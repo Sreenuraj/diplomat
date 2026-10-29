@@ -2,7 +2,7 @@
 
 Type anything (rude, rushed, messy) and get back a message you can send on Slack, in an Office app, or on LinkedIn. It runs on your machine with a local LLM. No accounts, no telemetry, nothing leaves your computer except the request to the model server you configure.
 
-> **Status: Phase 1 in progress.** The prompt engine and command-line tool work today. The floating window, global hotkey and settings screen are the next steps (see [`docs/plan.md`](docs/plan.md)). This README covers what you can use now and is marked where things are still to come.
+> **Status: Phase 1 (Step 2 complete).** The prompt engine, command-line tool, floating popup window, global hotkey (`⌥ Space`), and menu bar tray icon work today. The full Settings dialog (Step 3) and launcher scripts (Step 4) are next (see [`docs/plan.md`](docs/plan.md)).
 
 English only for now.
 
@@ -38,7 +38,18 @@ If you haven't chosen a model, the tool lists what your server has installed and
 python -m diplomat.prompt "can't do the offsite in march, too busy w/ the launch. maybe june?" --model llama3.1:8b
 ```
 
-(`PySide6` and `pynput` in `requirements.txt` are for the upcoming window and hotkey. For the command-line tool alone, `pip install httpx pytest` is enough.)
+## Using the floating popup & hotkey
+
+```bash
+python -m diplomat.main
+```
+
+- **Global hotkey (`⌥ Space` by default)** or clicking the **D** menu bar icon opens/hides the floating popup and focuses the text box. (On macOS, grant **Input Monitoring** permission to your Terminal / Python app in *System Settings → Privacy & Security → Input Monitoring* so `pynput` can listen for the global shortcut.)
+- `⌘↩` — Generate
+- `↩` in the output box — Copy and close
+- `⌘R` — Regenerate
+- `⌘,` — Settings
+- `Esc` — Cancel generation, or close the popup
 
 ## Using the command-line tool
 

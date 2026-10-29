@@ -1,5 +1,8 @@
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
 
@@ -92,6 +95,7 @@ def test_unknown_preset():
         ("Please read **this** now.", "Please read this now."),
         ("Hi Sam.", "Hi Sam."),
         ('He said "no" and "yes"', 'He said "no" and "yes"'),
+        ("\u201cHello,\u201d she said, \u201chow are you?\u201d", "\u201cHello,\u201d she said, \u201chow are you?\u201d"),
     ],
 )
 def test_clean_output(raw, expected):
@@ -246,6 +250,7 @@ def test_is_local_url():
 def test_em_dash_replaced_in_code():
     assert prompt.clean_output("Ship it \u2014 today.") == "Ship it, today."
     assert "\u2014" not in prompt.clean_output("a\u2014b")
+    assert prompt.clean_output("Line one\n\n\u2014 Line two") == "Line one\n\n, Line two"
 
 
 def test_default_model_is_not_machine_specific():
@@ -255,3 +260,104 @@ def test_default_model_is_not_machine_specific():
 def test_config_path_env_override(monkeypatch, tmp_path):
     monkeypatch.setenv("DIPLOMAT_CONFIG", str(tmp_path / "x.json"))
     assert config.config_path() == tmp_path / "x.json"
+
+
+# ---- step 2: hotkey & popup UI
+
+def test_hotkey_formatting_and_pynput_mapping():
+    from diplomat import main as main_mod
+
+    assert main_mod.to_pynput_hotkey("option+space") == "<alt>+<space>"
+    assert main_mod.to_pynput_hotkey("cmd+shift+d") == "<cmd>+<shift>+d"
+    assert main_mod.format_hotkey_label("option+space") == "⌥ Space"
+    with pytest.raises(ValueError):
+        main_mod.to_pynput_hotkey("   ")
+
+
+def test_format_counter_states():
+    from diplomat import ui
+
+    assert ui.format_counter(0, None) == ("", "normal")
+    assert ui.format_counter(120, None) == ("120 chars", "normal")
+    assert ui.format_counter(500, 3000) == ("500 / 3000", "normal")
+    assert ui.format_counter(2700, 3000) == ("2700 / 3000", "amber")
+    assert ui.format_counter(3000, 3000) == ("3000 / 3000", "amber")
+    assert ui.format_counter(3001, 3000) == ("3001 / 3000", "red")
+
+
+def test_popup_ui_end_to_end(tmp_path):
+    import time
+    from PySide6.QtWidgets import QApplication
+    from diplomat import ui
+
+    app = QApplication.instance() or QApplication([])
+    cfg_file = tmp_path / "config.json"
+    cfg = config.load(cfg_file)
+    cfg["model"] = "test-model"
+
+    def fake_stream(base_url, model, messages, api_key=None):
+        yield "Hi Priya, "
+        yield "I can have the fix ready by Friday."
+
+    popup = ui.PopupWindow(cfg=cfg, config_path=cfg_file, stream_fn=fake_stream)
+
+    # Empty input: Generate is disabled
+    assert not popup.generate_btn.isEnabled()
+    assert not popup.copy_btn.isEnabled()
+
+    # Tone panel toggle persists to config
+    assert popup.tone_panel.isHidden()
+    popup._toggle_tone_panel()
+    assert not popup.tone_panel.isHidden()
+    assert config.load(cfg_file)["tone_open"] is True
+
+    # Slider change + reset
+    popup.slider_widgets["humor"].setValue(80)
+    assert config.load(cfg_file)["sliders"]["humor"] == 80
+    popup.reset_sliders()
+    assert config.load(cfg_file)["sliders"]["humor"] == 0
+
+    # Type draft, generate, wait for worker, and copy
+    popup.draft_edit.setPlainText("fix ready friday tell priya")
+    assert popup.generate_btn.isEnabled()
+    popup.trigger_generate()
+    deadline = time.monotonic() + 3.0
+    while popup.is_generating() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+
+    assert popup.output_edit.toPlainText() == "Hi Priya, I can have the fix ready by Friday."
+    assert popup.generate_btn.text() == "Regenerate"
+    assert popup.copy_btn.isEnabled()
+    assert popup.copy_output() is True
+    assert app.clipboard().text() == "Hi Priya, I can have the fix ready by Friday."
+
+
+def test_popup_error_and_retry_state(tmp_path):
+    import time
+    from PySide6.QtWidgets import QApplication
+    from diplomat import ui
+
+    app = QApplication.instance() or QApplication([])
+    cfg_file = tmp_path / "config.json"
+    cfg = config.load(cfg_file)
+    cfg["model"] = "missing-model"
+
+    def failing_stream(base_url, model, messages, api_key=None):
+        raise llm.LLMError("model_missing", "Model 'missing-model' was not found on the server. Pick another one in Settings.")
+        yield ""  # pragma: no cover
+
+    popup = ui.PopupWindow(cfg=cfg, config_path=cfg_file, stream_fn=failing_stream)
+    popup.draft_edit.setPlainText("hello")
+    popup.trigger_generate()
+    deadline = time.monotonic() + 3.0
+    while popup.is_generating() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    app.processEvents()
+
+    assert not popup.error_label.isHidden()
+    assert "Settings" in popup.error_label.text()
+    assert not popup.open_settings_inline_btn.isHidden()
+    assert popup.generate_btn.text() == "Retry"

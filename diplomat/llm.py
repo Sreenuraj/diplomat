@@ -93,7 +93,7 @@ def stream_chat(
     try:
         for attempt in (1, 2):
             with httpx.stream("POST", url, headers=_headers(api_key), json=body, timeout=timeout) as resp:
-                if attempt == 1 and "reasoning_effort" in body and resp.status_code == 400:
+                if attempt == 1 and "reasoning_effort" in body and resp.status_code in (400, 422):
                     del body["reasoning_effort"]
                     continue
                 _raise_for_status(resp, model)
