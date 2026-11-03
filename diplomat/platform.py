@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QCoreApplication
@@ -133,8 +135,6 @@ LAUNCH_AGENT_LABEL = "com.diplomat.app"
 
 
 def get_launch_agent_path() -> Path:
-    from pathlib import Path
-
     return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 
 
@@ -149,8 +149,6 @@ def set_autostart_enabled(enabled: bool) -> bool:
     """Enable or disable LaunchAgent to run Diplomat at user login."""
     if sys.platform != "darwin":
         return False
-    import subprocess
-    from pathlib import Path
 
     plist_path = get_launch_agent_path()
     try:

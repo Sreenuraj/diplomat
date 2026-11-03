@@ -24,9 +24,11 @@ _LOADED_MODELS: dict[str, Any] = {}
 def is_whisper_available() -> bool:
     """Return True if OpenAI Whisper is importable or available as a CLI tool."""
     try:
-        import whisper  # noqa: F401
-        return True
-    except ImportError:
+        import importlib.util
+
+        if importlib.util.find_spec("whisper") is not None:
+            return True
+    except (ImportError, ValueError):
         pass
     return shutil.which("whisper") is not None
 
@@ -34,9 +36,11 @@ def is_whisper_available() -> bool:
 def get_whisper_status() -> tuple[bool, str]:
     """Return (available, description_message)."""
     try:
-        import whisper  # noqa: F401
-        return True, "Whisper available (Python module)"
-    except ImportError:
+        import importlib.util
+
+        if importlib.util.find_spec("whisper") is not None:
+            return True, "Whisper available (Python module)"
+    except (ImportError, ValueError):
         pass
     cli = shutil.which("whisper")
     if cli:
@@ -59,7 +63,6 @@ def transcribe(audio_path: str | Path, model_name: str = "base") -> str:
     try:
         import whisper
 
-        global _LOADED_MODELS
         if model_name not in _LOADED_MODELS:
             _LOADED_MODELS[model_name] = whisper.load_model(model_name)
         model = _LOADED_MODELS[model_name]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 import threading
-from typing import Callable
+from typing import Any, Callable
 
 from PySide6.QtCore import (
     QEasingCurve,
