@@ -31,6 +31,7 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QShortcut,
+    QTextCursor,
 )
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
@@ -51,7 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import config as config_mod
-from . import llm, prompt, voice
+from . import llm, platform as platform_mod, prompt, voice
 
 AMBER_RATIO = 0.9
 
@@ -382,6 +384,49 @@ def configure_macos_accessory_app() -> None:
         pass
 
 
+def apply_macos_vibrancy(widget: QWidget) -> bool:
+    """Attach an NSVisualEffectView to the macOS window for native frosted glass blur."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        import objc
+        import AppKit
+
+        wid = int(widget.winId())
+        if not wid:
+            return False
+        ns_view = objc.objc_object(c_void_p=wid)
+        ns_win = ns_view.window() if hasattr(ns_view, "window") else None
+        if ns_win is None:
+            return False
+
+        content_view = ns_win.contentView()
+        if content_view is None:
+            return False
+
+        for sub in content_view.subviews():
+            if "NSVisualEffectView" in str(type(sub)):
+                return True
+
+        bounds = content_view.bounds()
+        effect_view = AppKit.NSVisualEffectView.alloc().initWithFrame_(bounds)
+        effect_view.setAutoresizingMask_(18)  # NSViewWidthSizable (2) | NSViewHeightSizable (16)
+        effect_view.setBlendingMode_(getattr(AppKit, "NSVisualEffectBlendingModeBehindWindow", 0))
+        effect_view.setState_(getattr(AppKit, "NSVisualEffectStateActive", 1))
+        effect_view.setMaterial_(getattr(AppKit, "NSVisualEffectMaterialHUDWindow", 20))
+        if hasattr(effect_view, "setWantsLayer_"):
+            effect_view.setWantsLayer_(True)
+            layer = effect_view.layer()
+            if layer is not None and hasattr(layer, "setCornerRadius_"):
+                layer.setCornerRadius_(22.0)
+                layer.setMasksToBounds_(True)
+
+        content_view.addSubview_positioned_relativeTo_(effect_view, -1, None)
+        return True
+    except Exception:
+        return False
+
+
 def _configure_macos_window(
     widget: QWidget,
     level_offset: int = 0,
@@ -396,6 +441,8 @@ def _configure_macos_window(
     try:
         import AppKit
         import objc
+
+        apply_macos_vibrancy(widget)
 
         wid = int(widget.winId())
         if not wid:
@@ -488,6 +535,7 @@ class _GenerateWorker(QObject):
         sliders: dict[str, float],
         slop_rules: bool,
         stream_fn: Callable | None = None,
+        extra_instruction: str | None = None,
     ):
         super().__init__()
         self.base_url = base_url
@@ -499,6 +547,7 @@ class _GenerateWorker(QObject):
         self.sliders = dict(sliders)
         self.slop_rules = slop_rules
         self.stream_fn = stream_fn or llm.stream_chat
+        self.extra_instruction = extra_instruction
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
@@ -555,6 +604,7 @@ class _GenerateWorker(QObject):
                 self.sliders,
                 context=self.context,
                 slop_rules=self.slop_rules,
+                extra_instruction=self.extra_instruction,
             )
             if self._cancel.is_set():
                 raise _CancelledError()
@@ -583,18 +633,21 @@ class _DraftEdit(QPlainTextEdit):
 
 
 class _OutputEdit(QPlainTextEdit):
-    """Read-only output box where Return/Enter copies and closes the popup."""
+    """Read-only output box where Return copies & closes, and Shift+Return pastes & closes."""
 
     return_pressed = Signal()
+    shift_return_pressed = Signal()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        if (
-            event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
-            and event.modifiers() == Qt.KeyboardModifier.NoModifier
-        ):
-            self.return_pressed.emit()
-            event.accept()
-            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if event.modifiers() == Qt.KeyboardModifier.NoModifier:
+                self.return_pressed.emit()
+                event.accept()
+                return
+            elif event.modifiers() == Qt.KeyboardModifier.ShiftModifier:
+                self.shift_return_pressed.emit()
+                event.accept()
+                return
         super().keyPressEvent(event)
 
 
@@ -697,6 +750,10 @@ class PopupWindow(QWidget):
         self._voice_recorder.recording_failed.connect(self._on_voice_recording_failed)
         self._transcribe_worker: voice.TranscribeWorker | None = None
         self._transcribe_thread: threading.Thread | None = None
+        self._previous_app: Any | None = None
+        self._variants: list[str] = []
+        self._current_variant_idx: int = -1
+        self._history: list[dict] = []
         self._server_probed.connect(self._on_models_queried)
 
         self._setup_window()
@@ -842,6 +899,13 @@ class PopupWindow(QWidget):
         self.emoji_btn.clicked.connect(self._on_emoji_clicked)
         toolbar.addWidget(self.emoji_btn)
 
+        # History button
+        self.history_btn = QPushButton("🕒")
+        self.history_btn.setObjectName("iconButton")
+        self.history_btn.setToolTip("Recent history (⌘H)")
+        self.history_btn.clicked.connect(self.show_history_menu)
+        toolbar.addWidget(self.history_btn)
+
         # Settings button
         self.settings_btn = QPushButton("⚙")
         self.settings_btn.setObjectName("iconButton")
@@ -953,12 +1017,51 @@ class PopupWindow(QWidget):
 
         footer.addStretch(1)
 
+        # Variant switcher: [ ◀ 1/2 ▶ ]
+        self.variant_container = QWidget()
+        v_box = QHBoxLayout(self.variant_container)
+        v_box.setContentsMargins(0, 0, 0, 0)
+        v_box.setSpacing(4)
+        self.prev_variant_btn = QPushButton("◀")
+        self.prev_variant_btn.setObjectName("linkButton")
+        self.prev_variant_btn.setFixedWidth(20)
+        self.prev_variant_btn.setToolTip("Previous variant (⌥[)")
+        self.prev_variant_btn.clicked.connect(self.prev_variant)
+        v_box.addWidget(self.prev_variant_btn)
+
+        self.variant_label = QLabel("1/1")
+        self.variant_label.setObjectName("mutedLabel")
+        v_box.addWidget(self.variant_label)
+
+        self.next_variant_btn = QPushButton("▶")
+        self.next_variant_btn.setObjectName("linkButton")
+        self.next_variant_btn.setFixedWidth(20)
+        self.next_variant_btn.setToolTip("Next variant (⌥])")
+        self.next_variant_btn.clicked.connect(self.next_variant)
+        v_box.addWidget(self.next_variant_btn)
+        self.variant_container.setVisible(False)
+        footer.addWidget(self.variant_container)
+
+        self.shorter_btn = QPushButton("Shorter")
+        self.shorter_btn.setObjectName("linkButton")
+        self.shorter_btn.setToolTip("Condense output to be shorter and punchier (⌘S)")
+        self.shorter_btn.clicked.connect(self.trigger_shorter)
+        self.shorter_btn.setEnabled(False)
+        footer.addWidget(self.shorter_btn)
+
         self.copy_btn = QPushButton("Copy")
         self.copy_btn.setObjectName("linkButton")
         self.copy_btn.setToolTip("Copy to clipboard (already copied automatically)")
         self.copy_btn.clicked.connect(self.copy_output)
         self.copy_btn.setEnabled(False)
         footer.addWidget(self.copy_btn)
+
+        self.paste_btn = QPushButton("Paste (⇧↩)")
+        self.paste_btn.setObjectName("linkButton")
+        self.paste_btn.setToolTip("Paste directly into previous app and close (⇧↩)")
+        self.paste_btn.clicked.connect(self.paste_and_close)
+        self.paste_btn.setEnabled(False)
+        footer.addWidget(self.paste_btn)
 
         output_layout.addLayout(footer)
         layout.addWidget(self.output_card)
@@ -977,6 +1080,27 @@ class PopupWindow(QWidget):
         for seq in ("Ctrl+D", "Meta+D"):
             dictate_sc = QShortcut(QKeySequence(seq), self)
             dictate_sc.activated.connect(self.toggle_voice_recording)
+
+        self.output_edit.return_pressed.connect(self.copy_and_close)
+        self.output_edit.shift_return_pressed.connect(self.paste_and_close)
+
+        for seq in ("Shift+Return", "Shift+Enter"):
+            paste_sc = QShortcut(QKeySequence(seq), self)
+            paste_sc.activated.connect(self.paste_and_close)
+
+        for seq in ("Ctrl+S", "Meta+S"):
+            shorter_sc = QShortcut(QKeySequence(seq), self)
+            shorter_sc.activated.connect(self.trigger_shorter)
+
+        prev_v_sc = QShortcut(QKeySequence("Alt+["), self)
+        prev_v_sc.activated.connect(self.prev_variant)
+
+        next_v_sc = QShortcut(QKeySequence("Alt+]"), self)
+        next_v_sc.activated.connect(self.next_variant)
+
+        for seq in ("Ctrl+H", "Meta+H"):
+            hist_sc = QShortcut(QKeySequence(seq), self)
+            hist_sc.activated.connect(self.show_history_menu)
 
         settings_sc = QShortcut(QKeySequence("Ctrl+,"), self)
         settings_sc.activated.connect(self._on_settings_clicked)
@@ -1170,6 +1294,9 @@ class PopupWindow(QWidget):
         self.draft_edit.clear()
         self.context_edit.clear()
         self.output_edit.clear()
+        self._variants.clear()
+        self._current_variant_idx = -1
+        self._update_variant_ui()
         self.status_label.setText("")
         self._update_counter()
         self._update_controls()
@@ -1303,7 +1430,7 @@ class PopupWindow(QWidget):
         else:
             self.trigger_generate()
 
-    def trigger_generate(self) -> None:
+    def trigger_generate(self, extra_instruction: str | None = None) -> None:
         draft = self.draft_edit.toPlainText().strip()
         if not draft:
             self._update_controls()
@@ -1333,6 +1460,7 @@ class PopupWindow(QWidget):
             sliders=sliders,
             slop_rules=slop_rules,
             stream_fn=self._stream_fn,
+            extra_instruction=extra_instruction,
         )
         worker.status_changed.connect(self._on_worker_status)
         worker.partial_ready.connect(self._on_worker_partial)
@@ -1347,6 +1475,67 @@ class PopupWindow(QWidget):
         thread = threading.Thread(target=worker.run, daemon=True)
         self._thread = thread
         thread.start()
+
+    def trigger_shorter(self) -> None:
+        """Condense the current output message into a shorter, punchier version."""
+        if not self.output_edit.toPlainText().strip() or self.is_generating():
+            return
+        if "brevity" in self.slider_widgets:
+            self.slider_widgets["brevity"].setValue(100)
+        self.trigger_generate(extra_instruction="Make this significantly shorter and more concise while preserving core facts.")
+
+    def prev_variant(self) -> None:
+        if self._current_variant_idx > 0:
+            self._current_variant_idx -= 1
+            self._apply_current_variant()
+
+    def next_variant(self) -> None:
+        if self._current_variant_idx < len(self._variants) - 1:
+            self._current_variant_idx += 1
+            self._apply_current_variant()
+
+    def _apply_current_variant(self) -> None:
+        if 0 <= self._current_variant_idx < len(self._variants):
+            text = self._variants[self._current_variant_idx]
+            self.output_edit.setPlainText(text)
+            self.copy_output()
+            self._update_variant_ui()
+            self._update_controls()
+            self._update_counter()
+
+    def _update_variant_ui(self) -> None:
+        total = len(self._variants)
+        has_multi = total > 1
+        self.variant_container.setVisible(has_multi)
+        if has_multi:
+            curr = self._current_variant_idx + 1
+            self.variant_label.setText(f"{curr}/{total}")
+            self.prev_variant_btn.setEnabled(self._current_variant_idx > 0)
+            self.next_variant_btn.setEnabled(self._current_variant_idx < total - 1)
+
+    def show_history_menu(self) -> None:
+        menu = QMenu(self)
+        if not self._history:
+            empty_action = menu.addAction("No recent history")
+            empty_action.setEnabled(False)
+        else:
+            for item in reversed(self._history):
+                snippet = item["output"].replace("\n", " ")
+                if len(snippet) > 42:
+                    snippet = snippet[:40] + "…"
+                label = f"[{item['time']}] {snippet}"
+                action = menu.addAction(label)
+                action.triggered.connect(lambda checked=False, it=item: self._restore_history_item(it))
+        pos = self.history_btn.mapToGlobal(QPoint(0, self.history_btn.height() + 4))
+        menu.exec(pos)
+
+    def _restore_history_item(self, item: dict) -> None:
+        self.output_edit.setPlainText(item["output"])
+        if not self.draft_edit.toPlainText().strip() and item.get("draft"):
+            self.draft_edit.setPlainText(item["draft"])
+        self.copy_output()
+        self._update_controls()
+        self._update_counter()
 
     def cancel_generation(self) -> None:
         if self._worker is not None:
@@ -1381,12 +1570,27 @@ class PopupWindow(QWidget):
 
         # Automatically copy to clipboard as requested
         if result.text.strip():
+            if not self._variants or self._variants[-1] != result.text.strip():
+                self._variants.append(result.text.strip())
+            self._current_variant_idx = len(self._variants) - 1
+            self._update_variant_ui()
             clipboard = QGuiApplication.clipboard()
             if clipboard is not None:
                 clipboard.setText(result.text.strip())
             self.status_label.setText("✓ Copied to clipboard")
             self.copy_btn.setText("Copied ✓")
             QTimer.singleShot(2000, lambda: self.copy_btn.setText("Copy"))
+
+            import datetime
+            now_str = datetime.datetime.now().strftime("%H:%M")
+            self._history.append({
+                "draft": self.draft_edit.toPlainText().strip(),
+                "output": result.text.strip(),
+                "preset": self.current_preset().label,
+                "time": now_str,
+            })
+            if len(self._history) > 20:
+                self._history.pop(0)
         elif result.retries:
             self.status_label.setText("retried: " + ", ".join(result.retries))
         else:
@@ -1441,9 +1645,24 @@ class PopupWindow(QWidget):
             self.generate_btn.setEnabled(has_draft and not self.is_recording())
 
         self.clear_btn.setEnabled(has_any or self.is_generating() or self.is_recording())
+        self.shorter_btn.setEnabled(has_output and not self.is_generating())
         self.copy_btn.setEnabled(has_output and not self.is_generating())
+        self.paste_btn.setEnabled(has_output and not self.is_generating())
 
     # ---------------------------------------------------------------- clipboard & visibility
+
+    def set_previous_app(self, app: Any | None) -> None:
+        if app is not None:
+            self._previous_app = app
+
+    def set_captured_draft(self, text: str) -> None:
+        if text:
+            self.draft_edit.setPlainText(text)
+            cursor = self.draft_edit.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            self.draft_edit.setTextCursor(cursor)
+            self._update_controls()
+            self._update_counter()
 
     def copy_output(self) -> bool:
         text = self.output_edit.toPlainText().strip()
@@ -1459,6 +1678,24 @@ class PopupWindow(QWidget):
     def copy_and_close(self) -> None:
         if self.copy_output():
             self.hide_popup()
+
+    def paste_and_close(self) -> None:
+        if not self.copy_output():
+            return
+
+        if not platform_mod.is_accessibility_trusted(prompt=False):
+            platform_mod.is_accessibility_trusted(prompt=True)
+            self.status_label.setText("Copied ✓ (Grant Accessibility in Settings to auto-paste)")
+            QTimer.singleShot(1500, self.hide_popup)
+            return
+
+        self.hide_popup()
+        QTimer.singleShot(100, self._execute_paste)
+
+    def _execute_paste(self) -> None:
+        if self._previous_app is not None:
+            platform_mod.activate_app(self._previous_app)
+        QTimer.singleShot(60, platform_mod.simulate_paste)
 
     def handle_escape(self) -> None:
         if self.is_recording():
@@ -1486,6 +1723,8 @@ class PopupWindow(QWidget):
         self.move(x, max(geo.y() + 24, y))
 
     def show_popup(self) -> None:
+        if not self.isVisible() and self._previous_app is None:
+            self._previous_app = platform_mod.get_frontmost_app()
         self.apply_theme()
         self.reload_config()
         if not self.isVisible():
@@ -1887,7 +2126,14 @@ class SettingsDialog(QDialog):
         grid.addWidget(self.slop_rules_check, row, 1)
         row += 1
 
-        # 8. Voice dictation (Whisper STT)
+        # 8. Selection capture toggle
+        self.capture_selection_check = QCheckBox("Grab selected text on hotkey")
+        self.capture_selection_check.toggled.connect(self._on_capture_selection_toggled)
+        grid.addWidget(_make_row_label("Selection:"), row, 0)
+        grid.addWidget(self.capture_selection_check, row, 1)
+        row += 1
+
+        # 9. Voice dictation (Whisper STT)
         whisper_row = QHBoxLayout()
         whisper_row.setContentsMargins(0, 0, 0, 0)
         whisper_row.setSpacing(8)
@@ -1909,6 +2155,13 @@ class SettingsDialog(QDialog):
             "color: #34c759; font-size: 12px;" if avail else "color: #ff9500; font-size: 12px;"
         )
         grid.addWidget(self.whisper_status_label, row, 1)
+        row += 1
+
+        # 10. Startup (Launch at login)
+        self.autostart_check = QCheckBox("Launch Diplomat automatically at login")
+        self.autostart_check.toggled.connect(self._on_autostart_toggled)
+        grid.addWidget(_make_row_label("Startup:"), row, 0)
+        grid.addWidget(self.autostart_check, row, 1)
         row += 1
 
         root.addLayout(grid)
@@ -1969,11 +2222,22 @@ class SettingsDialog(QDialog):
         self.slop_rules_check.setChecked(bool(self.cfg.get("slop_rules", True)))
         self.slop_rules_check.blockSignals(False)
 
+        self.capture_selection_check.blockSignals(True)
+        self.capture_selection_check.setChecked(bool(self.cfg.get("capture_selection", True)))
+        self.capture_selection_check.blockSignals(False)
+
         wm = self.cfg.get("whisper_model", "base")
         w_idx = self.whisper_model_combo.findData(wm)
         self.whisper_model_combo.blockSignals(True)
         self.whisper_model_combo.setCurrentIndex(max(0, w_idx))
         self.whisper_model_combo.blockSignals(False)
+
+        self.autostart_check.blockSignals(True)
+        self.autostart_check.setChecked(platform_mod.is_autostart_enabled())
+        self.autostart_check.blockSignals(False)
+
+    def _on_autostart_toggled(self, checked: bool) -> None:
+        platform_mod.set_autostart_enabled(bool(checked))
 
     def _on_whisper_model_changed(self) -> None:
         wm = self.whisper_model_combo.currentData() or "base"
@@ -2042,6 +2306,10 @@ class SettingsDialog(QDialog):
 
     def _on_slop_rules_toggled(self, checked: bool) -> None:
         self.cfg["slop_rules"] = bool(checked)
+        self._save_and_emit()
+
+    def _on_capture_selection_toggled(self, checked: bool) -> None:
+        self.cfg["capture_selection"] = bool(checked)
         self._save_and_emit()
 
     def refresh_models(self) -> list[str]:

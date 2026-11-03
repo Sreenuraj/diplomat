@@ -54,10 +54,14 @@ When generated, the polished message is **automatically copied to your clipboard
 
 | Shortcut | Action |
 |----------|--------|
-| `⌥ Space` (configurable) | Show / hide the popup |
+| `⌥ Space` (configurable) | Show / hide the popup (grabs selected text if highlighted) |
 | `⌘D` | Toggle voice dictation (WhatsApp-style mic) |
 | `⌘↩` | Generate (auto-copies to clipboard) |
+| `⇧↩` | Paste directly into previous app and close |
 | `↩` in the output box | Copy to clipboard and close |
+| `⌘S` | Make output shorter & punchier |
+| `⌥[` / `⌥]` | Cycle through generated variants (1/2, 2/2) |
+| `⌘H` | Open recent rewrites history |
 | `⌘R` | Regenerate |
 | `⌘K` | Clear draft, reply context, and output |
 | `⌃⌘Space` | Emoji / symbols palette |
@@ -79,6 +83,7 @@ Press **`⌘D`** or click **`🎙 Speak`** in the header to dictate your draft d
 | Preset | Limit | Style |
 |--------|-------|-------|
 | `Slack / Office` (default) | none | short paragraphs, no greeting/sign-off unless in draft, plain text, no emoji |
+| `Email` | none | clear subject line (`Subject: ...`), polite greeting, structured paragraphs, professional sign-off |
 | `LinkedIn post` | 3,000 characters | strong opening lines, short paragraphs, concrete details, at most 3 hashtags at the end, no engagement bait |
 
 For presets with a character limit, the model is asked for ~90% of the limit (`2,700` characters for LinkedIn). The character counter turns **amber** at 90% and **red** over the limit. If the first output exceeds the limit, Diplomat automatically asks once for a shorter version and never truncates silently.

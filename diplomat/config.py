@@ -28,6 +28,7 @@ DEFAULTS: dict = {
     "slop_rules": True,
     "tone_open": False,
     "whisper_model": "base",
+    "capture_selection": True,
     "sliders": {
         "formality": 50,
         "warmth": 50,

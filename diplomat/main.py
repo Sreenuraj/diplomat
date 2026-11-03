@@ -15,6 +15,7 @@ from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import config as config_mod
+from . import platform as platform_mod
 from .ui import PopupWindow, SettingsDialog, configure_macos_accessory_app
 
 _KEY_MAP = {
@@ -408,13 +409,29 @@ class DiplomatApp(QObject):
         self.popup.quit_requested.connect(self.shutdown)
         self.popup.config_changed.connect(self._on_config_changed)
 
-        self.hotkey = HotkeyManager(self.popup.toggle_popup)
+        self.hotkey = HotkeyManager(self._on_hotkey_triggered)
         if enable_hotkey:
             self.hotkey.start(self.cfg.get("hotkey", config_mod.DEFAULTS["hotkey"]))
 
         self.tray: QSystemTrayIcon | None = None
         self.toggle_action: QAction | None = None
         self._setup_tray()
+
+    def _on_hotkey_triggered(self) -> None:
+        if self.popup.isVisible():
+            self.popup.hide_popup()
+            return
+
+        front_app = platform_mod.get_frontmost_app()
+        if front_app is not None:
+            self.popup.set_previous_app(front_app)
+
+        if self.cfg.get("capture_selection", True):
+            captured = platform_mod.capture_selected_text()
+            if captured:
+                self.popup.set_captured_draft(captured)
+
+        self.popup.show_popup()
 
     def _setup_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -425,7 +442,7 @@ class DiplomatApp(QObject):
         menu = QMenu()
         hotkey_label = format_hotkey_label(self.cfg.get("hotkey", config_mod.DEFAULTS["hotkey"]))
         self.toggle_action = menu.addAction(f"Show / Hide Diplomat ({hotkey_label})")
-        self.toggle_action.triggered.connect(self.popup.toggle_popup)
+        self.toggle_action.triggered.connect(self._on_hotkey_triggered)
 
         settings_action = menu.addAction("Settings…")
         settings_action.triggered.connect(self.open_settings)
@@ -444,7 +461,7 @@ class DiplomatApp(QObject):
             QSystemTrayIcon.ActivationReason.Trigger,
             QSystemTrayIcon.ActivationReason.DoubleClick,
         ):
-            self.popup.toggle_popup()
+            self._on_hotkey_triggered()
 
     def _on_config_changed(self, cfg: dict) -> None:
         new_hotkey = cfg.get("hotkey", config_mod.DEFAULTS["hotkey"])
