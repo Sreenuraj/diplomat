@@ -385,46 +385,10 @@ def configure_macos_accessory_app() -> None:
 
 
 def apply_macos_vibrancy(widget: QWidget) -> bool:
-    """Attach an NSVisualEffectView to the macOS window for native frosted glass blur."""
-    if sys.platform != "darwin":
-        return False
-    try:
-        import objc
-        import AppKit
-
-        wid = int(widget.winId())
-        if not wid:
-            return False
-        ns_view = objc.objc_object(c_void_p=wid)
-        ns_win = ns_view.window() if hasattr(ns_view, "window") else None
-        if ns_win is None:
-            return False
-
-        content_view = ns_win.contentView()
-        if content_view is None:
-            return False
-
-        for sub in content_view.subviews():
-            if "NSVisualEffectView" in str(type(sub)):
-                return True
-
-        bounds = content_view.bounds()
-        effect_view = AppKit.NSVisualEffectView.alloc().initWithFrame_(bounds)
-        effect_view.setAutoresizingMask_(18)  # NSViewWidthSizable (2) | NSViewHeightSizable (16)
-        effect_view.setBlendingMode_(getattr(AppKit, "NSVisualEffectBlendingModeBehindWindow", 0))
-        effect_view.setState_(getattr(AppKit, "NSVisualEffectStateActive", 1))
-        effect_view.setMaterial_(getattr(AppKit, "NSVisualEffectMaterialHUDWindow", 20))
-        if hasattr(effect_view, "setWantsLayer_"):
-            effect_view.setWantsLayer_(True)
-            layer = effect_view.layer()
-            if layer is not None and hasattr(layer, "setCornerRadius_"):
-                layer.setCornerRadius_(22.0)
-                layer.setMasksToBounds_(True)
-
-        content_view.addSubview_positioned_relativeTo_(effect_view, -1, None)
-        return True
-    except Exception:
-        return False
+    """No-op on macOS: PySide6 QNSView renders directly with WA_TranslucentBackground.
+    Adding NSVisualEffectView as an AppKit subview obscures the Qt widget hierarchy.
+    """
+    return False
 
 
 def _configure_macos_window(
@@ -441,8 +405,6 @@ def _configure_macos_window(
     try:
         import AppKit
         import objc
-
-        apply_macos_vibrancy(widget)
 
         wid = int(widget.winId())
         if not wid:
