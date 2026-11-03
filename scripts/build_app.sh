@@ -38,3 +38,4 @@ else
     echo "Build failed: $APP_PATH was not found."
     exit 1
 fi
+
