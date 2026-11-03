@@ -28,6 +28,7 @@ Type anything (rude, rushed, messy), press a hotkey, and get back a message you 
   - [LM Studio](https://lmstudio.ai) (`http://localhost:1234/v1`), or
   - any other OpenAI-compatible server
 - One instruct model. 7B works for simple rewrites; **8B or larger is recommended** (for example `qwen2.5:7b-instruct` or `llama3.1:8b`), because smaller models sometimes follow instructions inside your draft, add facts, or ignore the tone sliders.
+- Microphone & local [OpenAI Whisper](https://github.com/openai/whisper) for optional speech-to-text voice dictation (`pip install openai-whisper`, defaults to the `base` model).
 
 ## Quick start
 
@@ -49,14 +50,29 @@ On first run, `./run.sh` creates `.venv`, installs `requirements.txt`, starts Di
 
 Press **`⌥ Space`** from any app (or click the **D** icon in the macOS menu bar) to show or hide the floating window. Your cursor goes straight to the draft box.
 
+When generated, the polished message is **automatically copied to your clipboard** immediately — no extra click needed.
+
 | Shortcut | Action |
 |----------|--------|
 | `⌥ Space` (configurable) | Show / hide the popup |
-| `⌘↩` | Generate |
+| `⌘D` | Toggle voice dictation (WhatsApp-style mic) |
+| `⌘↩` | Generate (auto-copies to clipboard) |
 | `↩` in the output box | Copy to clipboard and close |
 | `⌘R` | Regenerate |
+| `⌘K` | Clear draft, reply context, and output |
+| `⌃⌘Space` | Emoji / symbols palette |
 | `⌘,` | Open Settings |
-| `Esc` | Cancel generation, or close the popup |
+| `Esc` | Cancel recording / generation, or close popup |
+
+### Voice dictation (speak instead of typing)
+
+Press **`⌘D`** or click **`🎙 Speak`** in the header to dictate your draft directly into Diplomat:
+- Recording captures from your default microphone using native macOS audio.
+- Click **`⏹ Stop`** or press **`⌘D`** again when done.
+- Local OpenAI Whisper transcribes your audio directly into the draft box in seconds.
+- If you already typed something, transcribed speech is cleanly appended.
+- Press **`Esc`** while recording to cancel without transcribing.
+- You can configure the local Whisper model (`base`, `tiny`, `small`, `medium`, `turbo`) in **Settings (`⌘,`)**. Default is `base`.
 
 ### Presets
 
@@ -75,15 +91,15 @@ Seven sliders (`0–100`): **Formality**, **Warmth**, **Directness**, **Humor**,
 
 Output follows a compact version of the [no-ai-slop](https://github.com/petergyang/no-ai-slop) rules: lead with the point, active voice, concrete details, no `"It's not X, it's Y"` contrasts, no throat-clearing openers, no banned buzzwords, and no em dashes. After generation, a regex check looks for the top patterns; if one appears, Diplomat retries once with those patterns explicitly banned.
 
-## macOS permissions (Input Monitoring)
+## macOS permissions
 
-Global hotkeys via `pynput` require **Input Monitoring** permission on macOS. The permission attaches to the app you launch Diplomat from (**Terminal**, **iTerm**, **VS Code**, or **Python**):
+- **Input Monitoring (Global Hotkey):** Global hotkeys require **Input Monitoring** permission on macOS. The permission attaches to the app you launch Diplomat from (**Terminal**, **iTerm**, **VS Code**, or **Python**):
+  1. Open **System Settings → Privacy & Security → Input Monitoring**.
+  2. Enable the app you launched from (for example **Terminal** or **Visual Studio Code**).
+  3. Restart Diplomat (or re-record the shortcut in **Settings**).
+  *(Even without Input Monitoring permission, you can always open and hide Diplomat from the **D** icon in the macOS menu bar.)*
 
-1. Open **System Settings → Privacy & Security → Input Monitoring**.
-2. Enable the app you launched from (for example **Terminal** or **Visual Studio Code**).
-3. Restart Diplomat (or re-record the shortcut in **Settings**).
-
-Even without Input Monitoring permission, you can always open and hide Diplomat from the **D** icon in the macOS menu bar.
+- **Microphone (Voice Dictation):** Voice dictation requires microphone access. macOS will ask for permission the first time you click **`🎙 Speak`** or press **`⌘D`**. If prompted, click **Allow**. You can also manage access in **System Settings → Privacy & Security → Microphone**.
 
 ## Switching provider, model, or hotkey
 
@@ -94,6 +110,7 @@ Press **`⌘,`** in the popup, click **⚙**, or choose **Settings…** from the
 - **Test Model:** sends a short rewrite and shows the output and response time.
 - **Global Hotkey:** click the hotkey field and press any modifier + key combination, or click **Default (⌥ Space)**.
 - **Writing Rules:** turn the compact `no-ai-slop` rules on or off.
+- **Voice Input:** choose the local Whisper model (`base`, `tiny`, `small`, `medium`, `turbo`) and verify STT readiness.
 
 Changes apply immediately without restarting.
 
@@ -117,6 +134,7 @@ Settings are stored in a single JSON file:
   "default_preset": "slack_office",
   "slop_rules": true,
   "tone_open": false,
+  "whisper_model": "base",
   "sliders": {
     "formality": 50,
     "warmth": 50,
@@ -171,6 +189,8 @@ To evaluate prompt changes against your local model across all 15 sample inputs:
 | First request is slow, or `took too long to start answering` | Cold models can take several seconds to load into memory (first-token timeout is 20s). Wait a moment and click **Retry**. |
 | Output ignores your draft and follows text inside it | Switch to an 8B+ instruct model. Very small models sometimes treat draft text as instructions. |
 | Preamble such as `"Here's the rewritten message:"` appears | Common preambles, markdown code fences, and wrapping quotes are stripped automatically. |
+| Microphone error or `No speech detected` | Allow microphone access in **System Settings → Privacy & Security → Microphone** for your terminal or Python, check the selected input in Sound settings, or try speaking closer to the mic. |
+| `Whisper is not installed` | Run `.venv/bin/pip install openai-whisper` or ensure `whisper` is available on your PATH. |
 
 ## Privacy
 

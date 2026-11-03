@@ -27,6 +27,7 @@ DEFAULTS: dict = {
     "default_preset": "slack_office",
     "slop_rules": True,
     "tone_open": False,
+    "whisper_model": "base",
     "sliders": {
         "formality": 50,
         "warmth": 50,

@@ -12,6 +12,8 @@ from PySide6.QtCore import (
     QObject,
     QPoint,
     QPropertyAnimation,
+    QRectF,
+    QSize,
     Qt,
     QTimer,
     Signal,
@@ -20,9 +22,14 @@ from PySide6.QtGui import (
     QColor,
     QCursor,
     QGuiApplication,
+    QIcon,
     QKeyEvent,
     QKeySequence,
+    QPainter,
+    QPainterPath,
     QPalette,
+    QPen,
+    QPixmap,
     QShortcut,
 )
 from PySide6.QtWidgets import (
@@ -44,7 +51,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import config as config_mod
-from . import llm, prompt
+from . import llm, prompt, voice
 
 AMBER_RATIO = 0.9
 
@@ -289,6 +296,71 @@ def build_stylesheet(dark: bool) -> str:
             margin: -5px 0;
             border-radius: 7px;
         }}
+        QFrame#inputContainer {{
+            background-color: {t["field_bg"]};
+            border: 1px solid {t["field_border"]};
+            border-radius: 16px;
+        }}
+        QFrame#inputContainer:focus-within {{
+            border: 1px solid {t["field_focus"]};
+        }}
+        QPlainTextEdit#chatDraftEdit {{
+            background-color: transparent;
+            border: none;
+            padding: 4px 6px;
+            font-size: 13.5px;
+            color: {t["text_fg"]};
+        }}
+        QComboBox#pillCombo {{
+            background-color: {t["btn_bg"]};
+            color: {t["text_fg"]};
+            border: 1px solid {t["field_border"]};
+            border-radius: 11px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 500;
+            min-height: 22px;
+            max-height: 24px;
+        }}
+        QComboBox#pillCombo:hover {{
+            background-color: {t["btn_hover"]};
+        }}
+        QPushButton#pillButton {{
+            background-color: {t["btn_bg"]};
+            color: {t["text_fg"]};
+            border: 1px solid {t["field_border"]};
+            border-radius: 11px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 500;
+            min-height: 22px;
+            max-height: 24px;
+        }}
+        QPushButton#pillButton:hover {{
+            background-color: {t["btn_hover"]};
+        }}
+        QPushButton#circleIconButton {{
+            border: none;
+            border-radius: 16px;
+            min-width: 32px;
+            max-width: 32px;
+            min-height: 32px;
+            max-height: 32px;
+            background: transparent;
+        }}
+        QPushButton#circleIconButton:hover {{
+            opacity: 0.88;
+        }}
+        QFrame#outputContainer {{
+            background-color: {t["field_bg"]};
+            border: 1px solid {t["field_border"]};
+            border-radius: 14px;
+        }}
+        QLabel#statusBadge {{
+            color: #34c759;
+            font-size: 11.5px;
+            font-weight: 600;
+        }}
     """
 
 
@@ -526,12 +598,81 @@ class _OutputEdit(QPlainTextEdit):
         super().keyPressEvent(event)
 
 
+def render_whatsapp_mic_icon(recording: bool = False, size: int = 32) -> QIcon:
+    """Render a WhatsApp-style circular microphone icon in crisp high DPI."""
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    scale = (size * 2) / 64.0
+    p.scale(scale, scale)
+
+    if recording:
+        # Active recording: WhatsApp/macOS red circle with white stop square
+        p.setBrush(QColor("#ff3b30"))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QRectF(3, 3, 58, 58))
+
+        p.setBrush(QColor("#ffffff"))
+        p.drawRoundedRect(QRectF(22, 22, 20, 20), 4, 4)
+    else:
+        # Idle: WhatsApp green circle with white microphone
+        p.setBrush(QColor("#25d366"))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(QRectF(3, 3, 58, 58))
+
+        p.setBrush(QColor("#ffffff"))
+        # Mic capsule body
+        p.drawRoundedRect(QRectF(26, 16, 12, 21), 6, 6)
+
+        # Arc cradle around mic
+        pen = QPen(QColor("#ffffff"), 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        path = QPainterPath()
+        path.arcMoveTo(QRectF(20, 22, 24, 20), 0)
+        path.arcTo(QRectF(20, 22, 24, 20), 0, -180)
+        p.drawPath(path)
+
+        # Stem and base line
+        p.drawLine(32, 42, 32, 48)
+        p.drawLine(25, 48, 39, 48)
+
+    p.end()
+    return QIcon(pixmap)
+
+
+def render_transcribing_icon(size: int = 32) -> QIcon:
+    """Render a circular transcribing / loading indicator."""
+    pixmap = QPixmap(size * 2, size * 2)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    scale = (size * 2) / 64.0
+    p.scale(scale, scale)
+
+    p.setBrush(QColor("#0a84ff"))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawEllipse(QRectF(3, 3, 58, 58))
+
+    p.setPen(QPen(QColor("#ffffff"), 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    path = QPainterPath()
+    path.arcMoveTo(QRectF(18, 18, 28, 28), 30)
+    path.arcTo(QRectF(18, 18, 28, 28), 30, 280)
+    p.drawPath(path)
+
+    p.end()
+    return QIcon(pixmap)
+
+
 class PopupWindow(QWidget):
     """Floating translucent Diplomat popup window."""
 
     settings_requested = Signal()
     quit_requested = Signal()
     config_changed = Signal(dict)
+    _server_probed = Signal(bool, list, str)
 
     def __init__(
         self,
@@ -550,6 +691,13 @@ class PopupWindow(QWidget):
         self._last_result: prompt.Result | None = None
         self._last_error_kind: str | None = None
         self._fade_anim: QPropertyAnimation | None = None
+        self._voice_recorder = voice.VoiceRecorder(self)
+        self._voice_recorder.recording_started.connect(self._on_voice_recording_started)
+        self._voice_recorder.recording_stopped.connect(self._on_voice_recording_stopped)
+        self._voice_recorder.recording_failed.connect(self._on_voice_recording_failed)
+        self._transcribe_worker: voice.TranscribeWorker | None = None
+        self._transcribe_thread: threading.Thread | None = None
+        self._server_probed.connect(self._on_models_queried)
 
         self._setup_window()
         self._build_ui()
@@ -570,8 +718,8 @@ class PopupWindow(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setMinimumWidth(540)
-        self.resize(560, 450)
+        self.setMinimumWidth(560)
+        self.resize(580, 480)
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -590,27 +738,14 @@ class PopupWindow(QWidget):
         layout.setContentsMargins(18, 14, 18, 16)
         layout.setSpacing(10)
 
-        # 1. Header bar: Title | Preset dropdown | Settings button | Quit button
+        # 1. Header bar: Title | Stretch | Clear | Quit
         header = QHBoxLayout()
         header.setSpacing(10)
         self.title_label = QLabel("Diplomat")
         self.title_label.setObjectName("titleLabel")
         header.addWidget(self.title_label)
 
-        self.preset_combo = QComboBox()
-        self.preset_combo.setMinimumWidth(148)
-        for key, preset in prompt.PRESETS.items():
-            self.preset_combo.addItem(preset.label, userData=key)
-        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
-        header.addWidget(self.preset_combo)
-
         header.addStretch(1)
-
-        self.emoji_btn = QPushButton("😊")
-        self.emoji_btn.setObjectName("iconButton")
-        self.emoji_btn.setToolTip("Insert Emoji / Smiley (⌃⌘Space)")
-        self.emoji_btn.clicked.connect(self._on_emoji_clicked)
-        header.addWidget(self.emoji_btn)
 
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.setObjectName("linkButton")
@@ -618,12 +753,6 @@ class PopupWindow(QWidget):
         self.clear_btn.clicked.connect(self.clear_all)
         self.clear_btn.setEnabled(False)
         header.addWidget(self.clear_btn)
-
-        self.settings_btn = QPushButton("⚙")
-        self.settings_btn.setObjectName("iconButton")
-        self.settings_btn.setToolTip("Settings (⌘,)")
-        self.settings_btn.clicked.connect(self._on_settings_clicked)
-        header.addWidget(self.settings_btn)
 
         self.quit_btn = QPushButton("Quit")
         self.quit_btn.setObjectName("linkButton")
@@ -639,43 +768,111 @@ class PopupWindow(QWidget):
         self.remote_warn_label.setVisible(False)
         layout.addWidget(self.remote_warn_label)
 
-        # 2. Draft text box
+        # 2. Modern Unified Input Box
+        self.input_container = QFrame()
+        self.input_container.setObjectName("inputContainer")
+        input_layout = QVBoxLayout(self.input_container)
+        input_layout.setContentsMargins(12, 10, 12, 10)
+        input_layout.setSpacing(6)
+
+        # 2a. Seamless typing area
         self.draft_edit = _DraftEdit()
-        self.draft_edit.setPlaceholderText("Type anything…  (⌘↩ to generate)")
-        self.draft_edit.setFixedHeight(88)
+        self.draft_edit.setObjectName("chatDraftEdit")
+        self.draft_edit.setPlaceholderText("Type or speak (⌘D)…  (⌘↩ to generate)")
+        self.draft_edit.setFixedHeight(78)
         self.draft_edit.textChanged.connect(self._on_draft_changed)
         self.draft_edit.submit_requested.connect(self.trigger_generate)
-        layout.addWidget(self.draft_edit)
+        input_layout.addWidget(self.draft_edit)
 
-        # 3. Collapsible "Replying to…" section
-        self.reply_toggle_btn = QPushButton("▸ Replying to… (optional: paste the message you got)")
+        # 2b. Collapsible "Replying to…" section inside container
+        self.reply_toggle_btn = QPushButton("▸ Replying to… (optional)")
         self.reply_toggle_btn.setObjectName("sectionToggle")
         self.reply_toggle_btn.clicked.connect(self._toggle_reply_panel)
-        layout.addWidget(self.reply_toggle_btn)
+        input_layout.addWidget(self.reply_toggle_btn)
 
         self.context_edit = _DraftEdit()
         self.context_edit.setPlaceholderText("Paste the message you are replying to…")
-        self.context_edit.setFixedHeight(64)
+        self.context_edit.setFixedHeight(56)
         self.context_edit.setVisible(False)
         self.context_edit.submit_requested.connect(self.trigger_generate)
-        layout.addWidget(self.context_edit)
+        input_layout.addWidget(self.context_edit)
 
-        # 4. Collapsible Tone panel + Reset button
-        tone_header = QHBoxLayout()
-        tone_header.setContentsMargins(0, 0, 0, 0)
-        self.tone_toggle_btn = QPushButton("▸ Tone")
-        self.tone_toggle_btn.setObjectName("sectionToggle")
+        # 2c. Toolbar directly below typing area
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(0, 4, 0, 2)
+        toolbar.setSpacing(6)
+
+        # Traffic light status indicator
+        self.traffic_light = QLabel()
+        self.traffic_light.setObjectName("trafficLight")
+        self.traffic_light.setFixedSize(8, 8)
+        self.traffic_light.setStyleSheet(
+            "background-color: #f59e0b; border-radius: 4px; min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;"
+        )
+        self.traffic_light.setToolTip("Checking model server…")
+        toolbar.addWidget(self.traffic_light)
+
+        # Model selector dropdown
+        self.model_combo = QComboBox()
+        self.model_combo.setObjectName("pillCombo")
+        self.model_combo.setToolTip("Active model (switch anytime)")
+        self.model_combo.currentTextChanged.connect(self._on_model_changed_in_combo)
+        toolbar.addWidget(self.model_combo)
+
+        # Preset dropdown
+        self.preset_combo = QComboBox()
+        self.preset_combo.setObjectName("pillCombo")
+        self.preset_combo.setToolTip("Preset style & limits")
+        for key, preset in prompt.PRESETS.items():
+            self.preset_combo.addItem(preset.label, userData=key)
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        toolbar.addWidget(self.preset_combo)
+
+        # Tone sliders button
+        self.tone_toggle_btn = QPushButton("🎚 Tone ▾")
+        self.tone_toggle_btn.setObjectName("pillButton")
+        self.tone_toggle_btn.setToolTip("Adjust tone sliders")
         self.tone_toggle_btn.clicked.connect(self._toggle_tone_panel)
-        tone_header.addWidget(self.tone_toggle_btn)
-        tone_header.addStretch(1)
+        toolbar.addWidget(self.tone_toggle_btn)
 
-        self.reset_sliders_btn = QPushButton("Reset")
-        self.reset_sliders_btn.setObjectName("linkButton")
-        self.reset_sliders_btn.setToolTip("Reset tone sliders to defaults")
-        self.reset_sliders_btn.clicked.connect(self.reset_sliders)
-        tone_header.addWidget(self.reset_sliders_btn)
-        layout.addLayout(tone_header)
+        # Emoji button
+        self.emoji_btn = QPushButton("😊")
+        self.emoji_btn.setObjectName("iconButton")
+        self.emoji_btn.setToolTip("Insert Emoji / Smiley (⌃⌘Space)")
+        self.emoji_btn.clicked.connect(self._on_emoji_clicked)
+        toolbar.addWidget(self.emoji_btn)
 
+        # Settings button
+        self.settings_btn = QPushButton("⚙")
+        self.settings_btn.setObjectName("iconButton")
+        self.settings_btn.setToolTip("Settings (⌘,)")
+        self.settings_btn.clicked.connect(self._on_settings_clicked)
+        toolbar.addWidget(self.settings_btn)
+
+        toolbar.addStretch(1)
+
+        # WhatsApp-style circular mic button
+        self.mic_btn = QPushButton()
+        self.mic_btn.setObjectName("circleIconButton")
+        self.mic_btn.setFixedSize(32, 32)
+        self.mic_btn.setIcon(render_whatsapp_mic_icon(recording=False, size=32))
+        self.mic_btn.setIconSize(QSize(28, 28))
+        self.mic_btn.setToolTip("Speak instead of typing (⌘D)")
+        self.mic_btn.clicked.connect(self.toggle_voice_recording)
+        toolbar.addWidget(self.mic_btn)
+
+        # Generate button
+        self.generate_btn = QPushButton("Generate")
+        self.generate_btn.setObjectName("primaryButton")
+        self.generate_btn.setMinimumWidth(88)
+        self.generate_btn.setToolTip("Generate (⌘↩) or Regenerate (⌘R)")
+        self.generate_btn.clicked.connect(self._on_generate_button_clicked)
+        toolbar.addWidget(self.generate_btn)
+
+        input_layout.addLayout(toolbar)
+        layout.addWidget(self.input_container)
+
+        # 3. Collapsible Tone panel + Reset button
         self.tone_panel = QWidget()
         tone_grid = QGridLayout(self.tone_panel)
         tone_grid.setContentsMargins(4, 2, 4, 4)
@@ -704,62 +901,67 @@ class PopupWindow(QWidget):
             self.slider_widgets[name] = slider
             self.slider_labels[name] = lbl
 
+        reset_row = QHBoxLayout()
+        reset_row.setContentsMargins(0, 2, 0, 0)
+        reset_row.addStretch(1)
+        self.reset_sliders_btn = QPushButton("Reset Tone")
+        self.reset_sliders_btn.setObjectName("linkButton")
+        self.reset_sliders_btn.setToolTip("Reset tone sliders to defaults")
+        self.reset_sliders_btn.clicked.connect(self.reset_sliders)
+        reset_row.addWidget(self.reset_sliders_btn)
+        tone_grid.addLayout(reset_row, 3, 0, 1, 3)
+
         layout.addWidget(self.tone_panel)
 
-        # 5. Divider
-        divider = QFrame()
-        divider.setObjectName("divider")
-        layout.addWidget(divider)
-
-        # 6. Output box + error label
-        self.output_edit = _OutputEdit()
-        self.output_edit.setObjectName("outputEdit")
-        self.output_edit.setReadOnly(True)
-        self.output_edit.setPlaceholderText("Your polished message will appear here…")
-        self.output_edit.setMinimumHeight(96)
-        self.output_edit.return_pressed.connect(self.copy_and_close)
-        layout.addWidget(self.output_edit)
-
+        # 4. Error banner (if any)
         self.error_label = QLabel("")
         self.error_label.setObjectName("errorLabel")
         self.error_label.setWordWrap(True)
         self.error_label.setVisible(False)
         layout.addWidget(self.error_label)
 
-        # 7. Footer: char counter | status | Regenerate / Generate | Copy
+        self.open_settings_inline_btn = QPushButton("Open Settings")
+        self.open_settings_inline_btn.clicked.connect(self._on_settings_clicked)
+        self.open_settings_inline_btn.setVisible(False)
+        layout.addWidget(self.open_settings_inline_btn)
+
+        # 5. Output Box + Footer
+        self.output_card = QFrame()
+        self.output_card.setObjectName("outputContainer")
+        output_layout = QVBoxLayout(self.output_card)
+        output_layout.setContentsMargins(10, 8, 10, 8)
+        output_layout.setSpacing(6)
+
+        self.output_edit = _OutputEdit()
+        self.output_edit.setObjectName("outputEdit")
+        self.output_edit.setReadOnly(True)
+        self.output_edit.setPlaceholderText("Polished message will appear here and copy automatically…")
+        self.output_edit.setMinimumHeight(84)
+        self.output_edit.return_pressed.connect(self.copy_and_close)
+        output_layout.addWidget(self.output_edit)
+
         footer = QHBoxLayout()
         footer.setSpacing(8)
+
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("statusBadge")
+        footer.addWidget(self.status_label)
 
         self.counter_label = QLabel("")
         self.counter_label.setObjectName("mutedLabel")
         footer.addWidget(self.counter_label)
 
-        self.status_label = QLabel("")
-        self.status_label.setObjectName("mutedLabel")
-        footer.addWidget(self.status_label)
-
         footer.addStretch(1)
 
-        self.open_settings_inline_btn = QPushButton("Open Settings")
-        self.open_settings_inline_btn.clicked.connect(self._on_settings_clicked)
-        self.open_settings_inline_btn.setVisible(False)
-        footer.addWidget(self.open_settings_inline_btn)
-
-        self.generate_btn = QPushButton("Generate")
-        self.generate_btn.setMinimumWidth(96)
-        self.generate_btn.setToolTip("Generate (⌘↩) or Regenerate (⌘R)")
-        self.generate_btn.clicked.connect(self._on_generate_button_clicked)
-        footer.addWidget(self.generate_btn)
-
         self.copy_btn = QPushButton("Copy")
-        self.copy_btn.setObjectName("primaryButton")
-        self.copy_btn.setMinimumWidth(82)
-        self.copy_btn.setToolTip("Copy to clipboard (↩ in output copies & closes)")
+        self.copy_btn.setObjectName("linkButton")
+        self.copy_btn.setToolTip("Copy to clipboard (already copied automatically)")
         self.copy_btn.clicked.connect(self.copy_output)
         self.copy_btn.setEnabled(False)
         footer.addWidget(self.copy_btn)
 
-        layout.addLayout(footer)
+        output_layout.addLayout(footer)
+        layout.addWidget(self.output_card)
 
     def _bind_shortcuts(self) -> None:
         for seq in ("Ctrl+Return", "Ctrl+Enter", "Meta+Return", "Meta+Enter"):
@@ -771,6 +973,10 @@ class PopupWindow(QWidget):
 
         clear_sc = QShortcut(QKeySequence("Ctrl+K"), self)
         clear_sc.activated.connect(self.clear_all)
+
+        for seq in ("Ctrl+D", "Meta+D"):
+            dictate_sc = QShortcut(QKeySequence(seq), self)
+            dictate_sc.activated.connect(self.toggle_voice_recording)
 
         settings_sc = QShortcut(QKeySequence("Ctrl+,"), self)
         settings_sc.activated.connect(self._on_settings_clicked)
@@ -811,6 +1017,8 @@ class PopupWindow(QWidget):
 
         self._update_controls()
         self._update_counter()
+        if self._stream_fn is None:
+            self.refresh_server_and_models()
 
     def reload_config(self, cfg: dict | None = None) -> None:
         self.cfg = cfg if cfg is not None else config_mod.load(self._config_path)
@@ -822,6 +1030,63 @@ class PopupWindow(QWidget):
         except OSError:
             pass
         self.config_changed.emit(self.cfg)
+
+    def refresh_server_and_models(self) -> None:
+        base_url = (
+            self.cfg.get("base_url")
+            or config_mod.PROVIDERS.get(self.cfg.get("provider", "ollama"))
+            or config_mod.DEFAULTS["base_url"]
+        )
+        api_key = self.cfg.get("api_key")
+        self.traffic_light.setStyleSheet(
+            "background-color: #f59e0b; border-radius: 4px; min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;"
+        )
+        self.traffic_light.setToolTip("Checking model server…")
+
+        def _worker():
+            try:
+                models = llm.list_models(base_url, api_key, timeout=3.0)
+                self._server_probed.emit(True, models, base_url)
+            except Exception as exc:
+                self._server_probed.emit(False, [], str(exc))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_models_queried(self, ok: bool, models: list[str], info: str) -> None:
+        if ok and models:
+            self.traffic_light.setStyleSheet(
+                "background-color: #34c759; border-radius: 4px; min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;"
+            )
+            self.traffic_light.setToolTip(f"Online: {info} ({len(models)} model(s) available)")
+            current = self.cfg.get("model", "")
+            self.model_combo.blockSignals(True)
+            self.model_combo.clear()
+            for m in models:
+                self.model_combo.addItem(m)
+            if current and current in models:
+                self.model_combo.setCurrentText(current)
+            elif models:
+                self.model_combo.setCurrentIndex(0)
+                self.cfg["model"] = models[0]
+                self._save_config()
+            self.model_combo.blockSignals(False)
+        else:
+            self.traffic_light.setStyleSheet(
+                "background-color: #ff3b30; border-radius: 4px; min-width: 8px; max-width: 8px; min-height: 8px; max-height: 8px;"
+            )
+            self.traffic_light.setToolTip(f"Model server unreachable: {info}")
+            current = self.cfg.get("model", "")
+            if current and self.model_combo.count() == 0:
+                self.model_combo.blockSignals(True)
+                self.model_combo.addItem(current)
+                self.model_combo.setCurrentText(current)
+                self.model_combo.blockSignals(False)
+
+    def _on_model_changed_in_combo(self, text: str) -> None:
+        model = text.strip()
+        if model and model != self.cfg.get("model"):
+            self.cfg["model"] = model
+            self._save_config()
 
     def current_preset(self) -> prompt.Preset:
         key = self.preset_combo.currentData() or "slack_office"
@@ -879,8 +1144,8 @@ class PopupWindow(QWidget):
     def _set_tone_panel_open(self, open_now: bool, save: bool = True) -> None:
         self.tone_panel.setVisible(open_now)
         self.reset_sliders_btn.setVisible(open_now)
-        arrow = "▾" if open_now else "▸"
-        self.tone_toggle_btn.setText(f"{arrow} Tone")
+        arrow = "▴" if open_now else "▾"
+        self.tone_toggle_btn.setText(f"🎚 Tone {arrow}")
         self.cfg["tone_open"] = open_now
         if save:
             self._save_config()
@@ -896,23 +1161,136 @@ class PopupWindow(QWidget):
 
     def clear_all(self) -> None:
         """Clear draft, reply context, output, and error state."""
+        if self.is_recording():
+            self.cancel_voice_recording()
         if self.is_generating():
             self.cancel_generation()
         self._last_result = None
-        self._last_error_kind = None
+        self.clear_error()
         self.draft_edit.clear()
         self.context_edit.clear()
         self.output_edit.clear()
-        self.error_label.setText("")
-        self.error_label.setVisible(False)
-        self.open_settings_inline_btn.setVisible(False)
         self.status_label.setText("")
         self._update_counter()
         self._update_controls()
         self.draft_edit.setFocus()
 
+    def clear_error(self) -> None:
+        self._last_error_kind = None
+        self.error_label.setText("")
+        self.error_label.setVisible(False)
+        self.open_settings_inline_btn.setVisible(False)
+
+    def show_error(self, kind: str, message: str) -> None:
+        self._last_error_kind = kind
+        self.status_label.setText("")
+        self.error_label.setText(message)
+        self.error_label.setVisible(True)
+        self.open_settings_inline_btn.setVisible(kind == "model_missing")
+        self._update_controls()
+
     def _on_settings_clicked(self) -> None:
         self.settings_requested.emit()
+
+    # ---------------------------------------------------------------- voice dictation
+
+    def is_recording(self) -> bool:
+        return self._voice_recorder.is_recording()
+
+    def toggle_voice_recording(self) -> None:
+        if self._transcribe_worker is not None:
+            return
+        if self.is_recording():
+            self._voice_recorder.stop_recording()
+        else:
+            self._start_voice_recording()
+
+    def _start_voice_recording(self) -> None:
+        self.clear_error()
+        self.status_label.setText("Listening… speak now (⌘D to stop)")
+        self.mic_btn.setIcon(render_whatsapp_mic_icon(recording=True, size=32))
+        self.mic_btn.setToolTip("Stop recording and transcribe with Whisper (⌘D)")
+        if not self.draft_edit.toPlainText().strip():
+            self.draft_edit.setPlaceholderText("Listening… speak now (press ⌘D or click to stop)")
+        ok = self._voice_recorder.start_recording()
+        if not ok:
+            self._reset_mic_button()
+        self._update_controls()
+
+    def _on_voice_recording_started(self) -> None:
+        self.status_label.setText("Listening… speak now (⌘D to stop)")
+        self._update_controls()
+
+    def _on_voice_recording_stopped(self, audio_path: str) -> None:
+        self._reset_mic_button(transcribing=True)
+        self.status_label.setText("Transcribing audio with Whisper…")
+
+        whisper_model = self.cfg.get("whisper_model", "base")
+        worker = voice.TranscribeWorker(audio_path, model_name=whisper_model)
+        worker.status_changed.connect(self.status_label.setText)
+        worker.finished.connect(self._on_voice_transcribe_finished)
+        worker.failed.connect(self._on_voice_transcribe_failed)
+        self._transcribe_worker = worker
+
+        thread = threading.Thread(target=worker.run, daemon=True)
+        self._transcribe_thread = thread
+        thread.start()
+
+    def _on_voice_recording_failed(self, error_str: str) -> None:
+        self._reset_mic_button()
+        self.show_error(
+            "mic_error",
+            f"Microphone error: {error_str}. Check microphone permissions in macOS System Settings.",
+        )
+        self._update_controls()
+
+    def _on_voice_transcribe_finished(self, text: str) -> None:
+        self._transcribe_worker = None
+        self._transcribe_thread = None
+        self._reset_mic_button()
+        clean = text.strip()
+        if clean:
+            existing = self.draft_edit.toPlainText().strip()
+            if existing:
+                self.draft_edit.setPlainText(f"{existing} {clean}")
+            else:
+                self.draft_edit.setPlainText(clean)
+            self.draft_edit.setFocus()
+            cursor = self.draft_edit.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            self.draft_edit.setTextCursor(cursor)
+            word_count = len(clean.split())
+            self.status_label.setText(
+                f"Transcribed {word_count} word{'s' if word_count != 1 else ''}"
+            )
+        else:
+            self.status_label.setText("No speech detected")
+        self._update_controls()
+
+    def _on_voice_transcribe_failed(self, error_str: str) -> None:
+        self._transcribe_worker = None
+        self._transcribe_thread = None
+        self._reset_mic_button()
+        self.show_error("whisper_error", f"Whisper transcription failed: {error_str}")
+        self._update_controls()
+
+    def cancel_voice_recording(self) -> None:
+        if self.is_recording():
+            self._voice_recorder.cancel_recording()
+        self._reset_mic_button()
+        self.status_label.setText("")
+        self._update_controls()
+
+    def _reset_mic_button(self, transcribing: bool = False) -> None:
+        if transcribing:
+            self.mic_btn.setIcon(render_transcribing_icon(size=32))
+            self.mic_btn.setEnabled(False)
+            self.mic_btn.setToolTip("Transcribing audio with Whisper…")
+        else:
+            self.mic_btn.setIcon(render_whatsapp_mic_icon(recording=False, size=32))
+            self.mic_btn.setEnabled(True)
+            self.mic_btn.setToolTip("Speak to dictate (⌘D)")
+            self.draft_edit.setPlaceholderText("Type or speak (⌘D)…  (⌘↩ to generate)")
 
     # ---------------------------------------------------------------- generation
 
@@ -1000,10 +1378,20 @@ class PopupWindow(QWidget):
         self._last_result = result
         self._last_error_kind = None
         self.output_edit.setPlainText(result.text)
-        if result.retries:
+
+        # Automatically copy to clipboard as requested
+        if result.text.strip():
+            clipboard = QGuiApplication.clipboard()
+            if clipboard is not None:
+                clipboard.setText(result.text.strip())
+            self.status_label.setText("✓ Copied to clipboard")
+            self.copy_btn.setText("Copied ✓")
+            QTimer.singleShot(2000, lambda: self.copy_btn.setText("Copy"))
+        elif result.retries:
             self.status_label.setText("retried: " + ", ".join(result.retries))
         else:
             self.status_label.setText("")
+
         self._update_counter()
         self._update_controls()
 
@@ -1011,12 +1399,7 @@ class PopupWindow(QWidget):
         if self.sender() is not self._worker:
             return
         self._worker = None
-        self._last_error_kind = kind
-        self.status_label.setText("")
-        self.error_label.setText(message)
-        self.error_label.setVisible(True)
-        self.open_settings_inline_btn.setVisible(kind == "model_missing")
-        self._update_controls()
+        self.show_error(kind, message)
 
     def _on_worker_cancelled(self) -> None:
         if self.sender() is not self._worker:
@@ -1043,7 +1426,7 @@ class PopupWindow(QWidget):
         has_draft = bool(self.draft_edit.toPlainText().strip())
         has_context = bool(self.context_edit.toPlainText().strip())
         has_output = bool(self.output_edit.toPlainText().strip())
-        has_any = has_draft or has_context or has_output or (self._last_error_kind is not None)
+        has_any = has_draft or has_context or has_output or (self._last_error_kind is not None) or self.is_recording()
 
         if self.is_generating():
             self.generate_btn.setText("Cancel")
@@ -1055,9 +1438,9 @@ class PopupWindow(QWidget):
                 self.generate_btn.setText("Regenerate")
             else:
                 self.generate_btn.setText("Generate")
-            self.generate_btn.setEnabled(has_draft)
+            self.generate_btn.setEnabled(has_draft and not self.is_recording())
 
-        self.clear_btn.setEnabled(has_any or self.is_generating())
+        self.clear_btn.setEnabled(has_any or self.is_generating() or self.is_recording())
         self.copy_btn.setEnabled(has_output and not self.is_generating())
 
     # ---------------------------------------------------------------- clipboard & visibility
@@ -1078,10 +1461,16 @@ class PopupWindow(QWidget):
             self.hide_popup()
 
     def handle_escape(self) -> None:
-        if self.is_generating():
+        if self.is_recording():
+            self.cancel_voice_recording()
+        elif self.is_generating():
             self.cancel_generation()
         else:
             self.hide_popup()
+
+    def closeEvent(self, event) -> None:
+        self._voice_recorder.teardown()
+        super().closeEvent(event)
 
     def apply_theme(self) -> None:
         self.setStyleSheet(build_stylesheet(is_dark_mode()))
@@ -1129,6 +1518,8 @@ class PopupWindow(QWidget):
         self._fade_anim = anim
 
     def hide_popup(self) -> None:
+        if self.is_recording():
+            self.cancel_voice_recording()
         if self._fade_anim is not None:
             self._fade_anim.stop()
         if not self.isVisible():
@@ -1496,6 +1887,30 @@ class SettingsDialog(QDialog):
         grid.addWidget(self.slop_rules_check, row, 1)
         row += 1
 
+        # 8. Voice dictation (Whisper STT)
+        whisper_row = QHBoxLayout()
+        whisper_row.setContentsMargins(0, 0, 0, 0)
+        whisper_row.setSpacing(8)
+        self.whisper_model_combo = QComboBox()
+        self.whisper_model_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        for m in voice.WHISPER_MODELS:
+            self.whisper_model_combo.addItem(f"{m} (local)", userData=m)
+        self.whisper_model_combo.currentIndexChanged.connect(self._on_whisper_model_changed)
+        whisper_row.addWidget(self.whisper_model_combo, 1)
+
+        grid.addWidget(_make_row_label("Voice Input:"), row, 0)
+        grid.addLayout(whisper_row, row, 1)
+        row += 1
+
+        self.whisper_status_label = _make_status_label()
+        avail, status_msg = voice.get_whisper_status()
+        self.whisper_status_label.setText(f"✓ {status_msg}" if avail else f"⚠ {status_msg}")
+        self.whisper_status_label.setStyleSheet(
+            "color: #34c759; font-size: 12px;" if avail else "color: #ff9500; font-size: 12px;"
+        )
+        grid.addWidget(self.whisper_status_label, row, 1)
+        row += 1
+
         root.addLayout(grid)
 
         divider = QFrame()
@@ -1553,6 +1968,17 @@ class SettingsDialog(QDialog):
         self.slop_rules_check.blockSignals(True)
         self.slop_rules_check.setChecked(bool(self.cfg.get("slop_rules", True)))
         self.slop_rules_check.blockSignals(False)
+
+        wm = self.cfg.get("whisper_model", "base")
+        w_idx = self.whisper_model_combo.findData(wm)
+        self.whisper_model_combo.blockSignals(True)
+        self.whisper_model_combo.setCurrentIndex(max(0, w_idx))
+        self.whisper_model_combo.blockSignals(False)
+
+    def _on_whisper_model_changed(self) -> None:
+        wm = self.whisper_model_combo.currentData() or "base"
+        self.cfg["whisper_model"] = wm
+        self._save_and_emit()
 
     def _save_and_emit(self) -> None:
         try:
