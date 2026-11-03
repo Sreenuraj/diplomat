@@ -69,6 +69,19 @@ def test_user_message_with_and_without_context():
     assert "<context>" not in prompt.build_user_message("hello", "   ")
 
 
+def test_user_context_in_prompt():
+    # Without user context
+    sp1 = prompt.build_system_prompt(SLACK, DEFAULT_SLIDERS)
+    assert "Sender identity" not in sp1
+
+    # With user context
+    identity = "You are replying as Sreenuraj Varma (referred to as Sreenu)."
+    sp2 = prompt.build_system_prompt(SLACK, DEFAULT_SLIDERS, user_context=identity)
+    assert "Sender identity & perspective:" in sp2
+    assert "Sreenuraj Varma" in sp2
+    assert "Never address or thank the sender" in sp2
+
+
 def test_target_chars():
     assert prompt.target_chars(3000) == 2700
     assert prompt.target_chars(None) is None
@@ -448,9 +461,11 @@ def test_settings_dialog_end_to_end(tmp_path):
     # Hotkey & writing rules apply immediately
     dlg._on_hotkey_changed("cmd+shift+space")
     dlg.slop_rules_check.setChecked(False)
+    dlg._on_user_context_edited("You are replying as Sreenuraj Varma")
     saved = config.load(cfg_file)
     assert saved["hotkey"] == "cmd+shift+space"
     assert saved["slop_rules"] is False
+    assert saved["user_context"] == "You are replying as Sreenuraj Varma"
 
     # Quit button emits quit_requested
     quit_fired = []

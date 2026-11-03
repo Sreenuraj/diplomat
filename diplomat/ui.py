@@ -523,6 +523,7 @@ class _GenerateWorker(QObject):
         slop_rules: bool,
         stream_fn: Callable | None = None,
         extra_instruction: str | None = None,
+        user_context: str | None = None,
     ):
         super().__init__()
         self.base_url = base_url
@@ -535,6 +536,7 @@ class _GenerateWorker(QObject):
         self.slop_rules = slop_rules
         self.stream_fn = stream_fn or llm.stream_chat
         self.extra_instruction = extra_instruction
+        self.user_context = user_context
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
@@ -592,6 +594,7 @@ class _GenerateWorker(QObject):
                 context=self.context,
                 slop_rules=self.slop_rules,
                 extra_instruction=self.extra_instruction,
+                user_context=self.user_context,
             )
             if self._cancel.is_set():
                 raise _CancelledError()
@@ -1499,6 +1502,7 @@ class PopupWindow(QWidget):
             slop_rules=slop_rules,
             stream_fn=self._stream_fn,
             extra_instruction=extra_instruction,
+            user_context=self.cfg.get("user_context", ""),
         )
         worker.status_changed.connect(self._on_worker_status)
         worker.partial_ready.connect(self._on_worker_partial)
@@ -2376,6 +2380,19 @@ class SettingsDialog(QDialog):
         grid.addWidget(self.capture_selection_check, row, 1)
         row += 1
 
+        # 9. My Identity / Sender context (local only)
+        self.user_context_edit = QLineEdit()
+        self.user_context_edit.setPlaceholderText("e.g. You are replying as Sreenuraj Varma (often referred to as Sreenu)")
+        self.user_context_edit.textEdited.connect(self._on_user_context_edited)
+        grid.addWidget(_make_row_label("My Identity:"), row, 0)
+        grid.addWidget(self.user_context_edit, row, 1)
+        row += 1
+
+        self.user_context_hint = QLabel("Who you are in conversations so replies don't confuse you with others (local only).")
+        self.user_context_hint.setStyleSheet("color: rgba(255, 255, 255, 0.45); font-size: 11px;")
+        grid.addWidget(self.user_context_hint, row, 1)
+        row += 1
+
         # 9. Voice dictation (Whisper STT)
         whisper_row = QHBoxLayout()
         whisper_row.setContentsMargins(0, 0, 0, 0)
@@ -2469,6 +2486,10 @@ class SettingsDialog(QDialog):
         self.capture_selection_check.blockSignals(True)
         self.capture_selection_check.setChecked(bool(self.cfg.get("capture_selection", True)))
         self.capture_selection_check.blockSignals(False)
+
+        self.user_context_edit.blockSignals(True)
+        self.user_context_edit.setText(str(self.cfg.get("user_context", "")))
+        self.user_context_edit.blockSignals(False)
 
         wm = self.cfg.get("whisper_model", "base")
         w_idx = self.whisper_model_combo.findData(wm)
@@ -2569,6 +2590,10 @@ class SettingsDialog(QDialog):
 
     def _on_capture_selection_toggled(self, checked: bool) -> None:
         self.cfg["capture_selection"] = bool(checked)
+        self._save_and_emit()
+
+    def _on_user_context_edited(self, text: str) -> None:
+        self.cfg["user_context"] = text.strip()
         self._save_and_emit()
 
     def refresh_models(self) -> list[str]:

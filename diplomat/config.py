@@ -23,6 +23,7 @@ DEFAULTS: dict = {
     "base_url": PROVIDERS["ollama"],
     "api_key": None,
     "model": "",  # empty = not chosen yet; pick one in Settings (or the CLI picks an installed one)
+    "user_context": "",  # sender identity context so replies don't confuse user with other people
     "hotkey": "option+space",
     "reply_hotkey": "option+shift+space",
     "default_preset": "slack_office",

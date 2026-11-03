@@ -187,8 +187,16 @@ def build_system_prompt(
     slop_rules: bool = True,
     banned: Iterable[str] = (),
     max_chars: int | None = None,
+    user_context: str | None = None,
 ) -> str:
     parts = [ROLE, FIDELITY]
+    if user_context and user_context.strip():
+        parts.append(
+            f"Sender identity & perspective:\n{user_context.strip()}\n"
+            "- You are writing from the perspective of this sender.\n"
+            "- If the incoming <context> mentions or addresses this person (by name, nickname, or pronoun), "
+            "remember that is the sender who is replying, not the recipient. Never address or thank the sender."
+        )
     style = ["Style:", preset.notes, "Tone settings:", *slider_lines(sliders)]
     if max_chars:
         style.append(f"Length: the message must be under {max_chars} characters.")
@@ -231,9 +239,10 @@ def build_messages(
     banned: Iterable[str] = (),
     max_chars: int | None = None,
     extra_instruction: str | None = None,
+    user_context: str | None = None,
 ) -> list[dict]:
     return [
-        {"role": "system", "content": build_system_prompt(preset, sliders, slop_rules, banned, max_chars)},
+        {"role": "system", "content": build_system_prompt(preset, sliders, slop_rules, banned, max_chars, user_context=user_context)},
         {"role": "user", "content": build_user_message(text, context, extra_instruction=extra_instruction)},
     ]
 
@@ -348,6 +357,7 @@ def generate(
     context: str | None = None,
     slop_rules: bool = True,
     extra_instruction: str | None = None,
+    user_context: str | None = None,
 ) -> Result:
     """Generate once, then at most one slop retry and one shorten retry. Never truncates."""
     max_chars = target_chars(preset.limit)
@@ -360,6 +370,7 @@ def generate(
         slop_rules,
         max_chars=max_chars,
         extra_instruction=extra_instruction,
+        user_context=user_context,
     )
     out = clean_output(chat_fn(messages), plain)
     result = Result(out, preset.limit)
@@ -377,7 +388,7 @@ def generate(
 
     if over_limit(out, preset.limit):
         banned = find_slop(out) if slop_rules else []
-        base = build_messages(text, preset, sliders, context, slop_rules, banned=banned, max_chars=max_chars)
+        base = build_messages(text, preset, sliders, context, slop_rules, banned=banned, max_chars=max_chars, user_context=user_context)
         followup = base + [
             {"role": "assistant", "content": out},
             {"role": "user", "content": shorten_instruction(max_chars or preset.limit)},
@@ -429,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base-url")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=0..100", help="override a slider")
     ap.add_argument("--no-rules", action="store_true", help="turn the no-ai-slop rules off")
+    ap.add_argument("--user-context", help="sender identity context (overrides config)")
     ap.add_argument("--show-prompt", action="store_true", help="print the system prompt and exit")
     args = ap.parse_args(argv)
 
@@ -436,9 +448,10 @@ def main(argv: list[str] | None = None) -> int:
     preset = get_preset({"slack": "slack_office"}.get(args.preset or "", args.preset or cfg["default_preset"]))
     sliders = _parse_sliders(args.set, cfg["sliders"])
     slop_rules = cfg["slop_rules"] and not args.no_rules
+    user_context = args.user_context if args.user_context is not None else cfg.get("user_context", "")
 
     if args.show_prompt:
-        print(build_system_prompt(preset, sliders, slop_rules, max_chars=target_chars(preset.limit)))
+        print(build_system_prompt(preset, sliders, slop_rules, max_chars=target_chars(preset.limit), user_context=user_context))
         return 0
 
     if args.file:
@@ -481,7 +494,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for n, item in enumerate(inputs, 1):
             print(f"\n[{n}/{len(inputs)}] INPUT ({preset.label}, {model})\n{item}\n")
-            result = generate(chat_fn, item, preset, sliders, args.context, slop_rules)
+            result = generate(chat_fn, item, preset, sliders, args.context, slop_rules, user_context=user_context)
             print(f"OUTPUT\n{result.text}\n")
             notes = [f"{len(result.text)} chars"]
             if result.retries:
