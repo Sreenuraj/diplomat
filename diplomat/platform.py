@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -11,6 +12,8 @@ from typing import Any
 
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QGuiApplication
+
+logger = logging.getLogger("diplomat.platform")
 
 
 def get_frontmost_app() -> Any | None:
@@ -60,36 +63,27 @@ def simulate_paste(target_pid: int | None = None) -> bool:
     try:
         import Quartz
 
-        # Isolated private event source ignores hardware modifier state
         src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
 
         # Release lingering modifier keys (Option, Shift, Return)
         for key in (0x3A, 0x3D, 0x38, 0x3C, 0x24):
             rel = Quartz.CGEventCreateKeyboardEvent(src, key, False)
             Quartz.CGEventSetFlags(rel, 0)
-            if target_pid:
-                try:
-                    Quartz.CGEventPostToPid(target_pid, rel)
-                except Exception:
-                    pass
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, rel)
 
         # kVK_ANSI_V = 0x09
         down = Quartz.CGEventCreateKeyboardEvent(src, 0x09, True)
         Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+
+        time.sleep(0.015)
+
         up = Quartz.CGEventCreateKeyboardEvent(src, 0x09, False)
         Quartz.CGEventSetFlags(up, Quartz.kCGEventFlagMaskCommand)
-
-        if target_pid:
-            try:
-                Quartz.CGEventPostToPid(target_pid, down)
-                Quartz.CGEventPostToPid(target_pid, up)
-            except Exception:
-                pass
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"simulate_paste failed: {exc}")
         return False
 
 
@@ -100,40 +94,31 @@ def simulate_copy(target_pid: int | None = None) -> bool:
     try:
         import Quartz
 
-        # Isolated private event source ignores hardware modifier state (e.g. Option held for ⌥ Space)
         src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
 
         # Explicitly release Option and Shift keys so the stroke is pure Cmd+C rather than ⌥⌘C
         for key in (0x3A, 0x3D, 0x38, 0x3C):
             rel = Quartz.CGEventCreateKeyboardEvent(src, key, False)
             Quartz.CGEventSetFlags(rel, 0)
-            if target_pid:
-                try:
-                    Quartz.CGEventPostToPid(target_pid, rel)
-                except Exception:
-                    pass
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, rel)
 
         # kVK_ANSI_C = 0x08
         down = Quartz.CGEventCreateKeyboardEvent(src, 0x08, True)
         Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+
+        time.sleep(0.015)
+
         up = Quartz.CGEventCreateKeyboardEvent(src, 0x08, False)
         Quartz.CGEventSetFlags(up, Quartz.kCGEventFlagMaskCommand)
-
-        if target_pid:
-            try:
-                Quartz.CGEventPostToPid(target_pid, down)
-                Quartz.CGEventPostToPid(target_pid, up)
-            except Exception:
-                pass
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
         return True
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"simulate_copy failed: {exc}")
         return False
 
 
-def capture_selected_text(target_pid: int | None = None, timeout_sec: float = 0.35) -> str | None:
+def capture_selected_text(target_pid: int | None = None, timeout_sec: float = 0.45) -> str | None:
     """Grabs selected text from the frontmost app via Cmd+C, preserving existing clipboard."""
     if sys.platform != "darwin":
         return None
@@ -144,7 +129,9 @@ def capture_selected_text(target_pid: int | None = None, timeout_sec: float = 0.
         initial_change_count = pb.changeCount()
         old_text = pb.stringForType_(NSPasteboardTypeString)
 
+        logger.info(f"capture_selected_text: initial changeCount={initial_change_count}")
         if not simulate_copy(target_pid=target_pid):
+            logger.warning("capture_selected_text: simulate_copy returned False")
             return None
 
         # Give target app time to process Cmd+C and write to pasteboard
@@ -152,8 +139,11 @@ def capture_selected_text(target_pid: int | None = None, timeout_sec: float = 0.
         captured: str | None = None
         while time.monotonic() - start < timeout_sec:
             QCoreApplication.processEvents()
-            if pb.changeCount() != initial_change_count:
+            current_count = pb.changeCount()
+            if current_count != initial_change_count:
                 captured = pb.stringForType_(NSPasteboardTypeString)
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                logger.info(f"capture_selected_text: changeCount {initial_change_count} -> {current_count} in {elapsed_ms}ms")
                 break
             time.sleep(0.015)
 
@@ -163,10 +153,13 @@ def capture_selected_text(target_pid: int | None = None, timeout_sec: float = 0.
             if old_text is not None:
                 pb.setString_forType_(old_text, NSPasteboardTypeString)
             cleaned = captured.strip()
+            logger.info(f"capture_selected_text: captured {len(cleaned)} chars: {repr(cleaned[:50])}")
             return cleaned if cleaned else None
 
+        logger.info(f"capture_selected_text: timed out after {timeout_sec}s with no clipboard change")
         return None
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"capture_selected_text error: {exc}")
         return None
 
 
@@ -210,23 +203,41 @@ def is_front_element_editable(front_app: Any | None = None) -> bool:
                 elem = s_elem
 
         if not elem:
+            logger.info(f"is_front_element_editable: no focused element found for pid={pid}")
             return False
 
-        # Check if selected text or value is settable (editable)
+        # 1. Native AXIsEditable attribute (Chromium, WebKit, AppKit)
+        err_ed, is_ed = AX.AXUIElementCopyAttributeValue(elem, "AXIsEditable", None)
+        if err_ed == 0 and is_ed:
+            logger.info(f"is_front_element_editable: AXIsEditable=True for pid={pid}")
+            return True
+
+        # 2. Check if selected text or value is settable (editable)
         err_sel, sel_set = AX.AXUIElementIsAttributeSettable(elem, "AXSelectedText", None)
         if err_sel == 0 and sel_set:
+            logger.info(f"is_front_element_editable: AXSelectedText is settable for pid={pid}")
             return True
 
         err_val, val_set = AX.AXUIElementIsAttributeSettable(elem, "AXValue", None)
         if err_val == 0 and val_set:
+            logger.info(f"is_front_element_editable: AXValue is settable for pid={pid}")
             return True
 
+        # 3. Check text-input roles
         err_role, role = AX.AXUIElementCopyAttributeValue(elem, "AXRole", None)
+        logger.info(f"is_front_element_editable: role={role} for pid={pid}")
         if err_role == 0 and role in ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField"):
             return True
 
+        # 4. Check if element has an editable ancestor
+        err_anc, anc = AX.AXUIElementCopyAttributeValue(elem, "AXEditableAncestor", None)
+        if err_anc == 0 and anc:
+            logger.info(f"is_front_element_editable: AXEditableAncestor present for pid={pid}")
+            return True
+
         return False
-    except Exception:
+    except Exception as exc:
+        logger.warning(f"is_front_element_editable error: {exc}")
         return False
 
 

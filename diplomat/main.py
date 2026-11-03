@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import ctypes
 import ctypes.util
+import logging
 import os
 import signal
 import sys
+from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QObject, QRectF, Qt, QTimer, Signal
@@ -17,6 +19,27 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from . import config as config_mod
 from . import platform as platform_mod
 from .ui import PopupWindow, SettingsDialog, configure_macos_accessory_app
+
+logger = logging.getLogger("diplomat")
+
+
+def _setup_logging() -> None:
+    log_file = Path.home() / "Library" / "Logs" / "Diplomat.log"
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        if not any(isinstance(h, logging.FileHandler) for h in root_logger.handlers):
+            fh = logging.FileHandler(log_file, encoding="utf-8")
+            fh.setFormatter(formatter)
+            root_logger.addHandler(fh)
+        if not any(isinstance(h, logging.StreamHandler) for h in root_logger.handlers):
+            sh = logging.StreamHandler(sys.stdout)
+            sh.setFormatter(formatter)
+            root_logger.addHandler(sh)
+    except Exception:
+        pass
 
 _KEY_MAP = {
     "option": "<alt>",
@@ -448,37 +471,54 @@ class DiplomatApp(QObject):
         self._setup_tray()
 
     def _on_hotkey_triggered(self) -> None:
+        logger.info("HotKey ⌥ Space triggered")
         if self.popup.isVisible():
+            logger.info("Popup is already visible, hiding popup")
             self.popup.hide_popup()
             return
 
         front_app = platform_mod.get_frontmost_app()
+        app_name = front_app.localizedName() if front_app is not None else "None"
         target_pid = front_app.processIdentifier() if front_app is not None else None
+        logger.info(f"Frontmost app before popup: {app_name} (PID {target_pid})")
         if front_app is not None:
             self.popup.set_previous_app(front_app)
 
-        if self.cfg.get("capture_selection", True):
+        capture_enabled = bool(self.cfg.get("capture_selection", True))
+        logger.info(f"Selection capture enabled: {capture_enabled}")
+        if capture_enabled:
             captured = platform_mod.capture_selected_text(target_pid=target_pid)
             if captured:
                 is_editable = platform_mod.is_front_element_editable(front_app)
+                logger.info(f"Captured {len(captured)} chars, is_editable={is_editable}")
                 if is_editable:
+                    logger.info("Routing captured text to: Draft box")
                     self.popup.set_captured_draft(captured)
                 else:
+                    logger.info("Routing captured text to: Reply box")
                     self.popup.set_captured_context(captured)
+            else:
+                logger.info("No selection captured (none selected or timeout)")
 
         self.popup.show_popup()
 
     def _on_reply_hotkey_triggered(self) -> None:
+        logger.info("Reply HotKey ⌥ ⇧ Space triggered")
         front_app = platform_mod.get_frontmost_app()
+        app_name = front_app.localizedName() if front_app is not None else "None"
         target_pid = front_app.processIdentifier() if front_app is not None else None
+        logger.info(f"Frontmost app before popup: {app_name} (PID {target_pid})")
         if front_app is not None:
             self.popup.set_previous_app(front_app)
 
         captured = ""
-        if self.cfg.get("capture_selection", True):
-            captured = platform_mod.capture_selected_text(target_pid=target_pid)
+        capture_enabled = bool(self.cfg.get("capture_selection", True))
+        logger.info(f"Selection capture enabled: {capture_enabled}")
+        if capture_enabled:
+            captured = platform_mod.capture_selected_text(target_pid=target_pid) or ""
 
         if captured:
+            logger.info(f"Captured {len(captured)} chars for Reply box")
             self.popup.set_captured_context(captured)
         elif self.popup.isVisible():
             self.popup.hide_popup()
@@ -614,6 +654,7 @@ class DiplomatApp(QObject):
 
 
 def main(argv: list[str] | None = None) -> int:
+    _setup_logging()
     ap = argparse.ArgumentParser(prog="python -m diplomat.main", description="Start the Diplomat popup and tray app.")
     ap.add_argument("--no-popup", action="store_true", help="start in the menu bar without opening the popup immediately")
     ap.add_argument("--no-hotkey", action="store_true", help="do not register the global hotkey")
