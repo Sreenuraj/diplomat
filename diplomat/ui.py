@@ -1773,9 +1773,14 @@ class PopupWindow(QWidget):
         QTimer.singleShot(100, self._execute_paste)
 
     def _execute_paste(self) -> None:
+        target_pid = None
         if self._previous_app is not None:
             platform_mod.activate_app(self._previous_app)
-        QTimer.singleShot(60, platform_mod.simulate_paste)
+            try:
+                target_pid = self._previous_app.processIdentifier()
+            except Exception:
+                target_pid = None
+        QTimer.singleShot(80, lambda: platform_mod.simulate_paste(target_pid=target_pid))
 
     def handle_escape(self) -> None:
         if self.is_recording():

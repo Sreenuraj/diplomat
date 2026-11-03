@@ -453,11 +453,12 @@ class DiplomatApp(QObject):
             return
 
         front_app = platform_mod.get_frontmost_app()
+        target_pid = front_app.processIdentifier() if front_app is not None else None
         if front_app is not None:
             self.popup.set_previous_app(front_app)
 
         if self.cfg.get("capture_selection", True):
-            captured = platform_mod.capture_selected_text()
+            captured = platform_mod.capture_selected_text(target_pid=target_pid)
             if captured:
                 is_editable = platform_mod.is_front_element_editable(front_app)
                 if is_editable:
@@ -469,12 +470,13 @@ class DiplomatApp(QObject):
 
     def _on_reply_hotkey_triggered(self) -> None:
         front_app = platform_mod.get_frontmost_app()
+        target_pid = front_app.processIdentifier() if front_app is not None else None
         if front_app is not None:
             self.popup.set_previous_app(front_app)
 
         captured = ""
         if self.cfg.get("capture_selection", True):
-            captured = platform_mod.capture_selected_text()
+            captured = platform_mod.capture_selected_text(target_pid=target_pid)
 
         if captured:
             self.popup.set_captured_context(captured)

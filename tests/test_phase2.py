@@ -241,3 +241,33 @@ def test_macos_vibrancy_smoke():
     # Smoke test: does not raise error
     platform_mod.get_frontmost_app()
     ui.apply_macos_vibrancy(w)
+
+
+def test_selection_capture_logic(monkeypatch):
+    """Test selection capture changeCount detection and clipboard restoration."""
+    from AppKit import NSPasteboard, NSPasteboardTypeString
+
+    pb = NSPasteboard.generalPasteboard()
+    original_text = pb.stringForType_(NSPasteboardTypeString) or ""
+
+    # Test 1: simulate_copy returns False -> capture_selected_text returns None
+    monkeypatch.setattr(platform_mod, "simulate_copy", lambda **kwargs: False)
+    assert platform_mod.capture_selected_text() is None
+
+    # Test 2: simulate_copy succeeds and updates clipboard -> returns captured text & restores clipboard
+    def fake_copy(**kwargs):
+        pb.clearContents()
+        pb.setString_forType_("Simulated Selected Text", NSPasteboardTypeString)
+        return True
+
+    monkeypatch.setattr(platform_mod, "simulate_copy", fake_copy)
+    result = platform_mod.capture_selected_text(timeout_sec=0.1)
+    assert result == "Simulated Selected Text"
+
+    # Verify original clipboard was restored
+    restored = pb.stringForType_(NSPasteboardTypeString) or ""
+    assert restored == original_text
+
+    # Test 3: editable detection doesn't crash on None or dummy
+    assert platform_mod.is_front_element_editable(None) is False
+

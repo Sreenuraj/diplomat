@@ -53,80 +53,119 @@ def is_accessibility_trusted(prompt: bool = False) -> bool:
         return False
 
 
-def simulate_paste() -> bool:
+def simulate_paste(target_pid: int | None = None) -> bool:
     """Simulate Cmd+V keystroke to paste into the active application."""
     if sys.platform != "darwin":
         return False
     try:
         import Quartz
 
-        # kVK_ANSI_V = 0x09
-        down = Quartz.CGEventCreateKeyboardEvent(None, 0x09, True)
-        Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+        # Isolated private event source ignores hardware modifier state
+        src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
 
-        up = Quartz.CGEventCreateKeyboardEvent(None, 0x09, False)
+        # Release lingering modifier keys (Option, Shift, Return)
+        for key in (0x3A, 0x3D, 0x38, 0x3C, 0x24):
+            rel = Quartz.CGEventCreateKeyboardEvent(src, key, False)
+            Quartz.CGEventSetFlags(rel, 0)
+            if target_pid:
+                try:
+                    Quartz.CGEventPostToPid(target_pid, rel)
+                except Exception:
+                    pass
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, rel)
+
+        # kVK_ANSI_V = 0x09
+        down = Quartz.CGEventCreateKeyboardEvent(src, 0x09, True)
+        Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
+        up = Quartz.CGEventCreateKeyboardEvent(src, 0x09, False)
         Quartz.CGEventSetFlags(up, Quartz.kCGEventFlagMaskCommand)
+
+        if target_pid:
+            try:
+                Quartz.CGEventPostToPid(target_pid, down)
+                Quartz.CGEventPostToPid(target_pid, up)
+            except Exception:
+                pass
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
         return True
     except Exception:
         return False
 
 
-def simulate_copy() -> bool:
+def simulate_copy(target_pid: int | None = None) -> bool:
     """Simulate Cmd+C keystroke to copy from the active application."""
     if sys.platform != "darwin":
         return False
     try:
         import Quartz
 
-        # kVK_ANSI_C = 0x08
-        down = Quartz.CGEventCreateKeyboardEvent(None, 0x08, True)
-        Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
-        Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+        # Isolated private event source ignores hardware modifier state (e.g. Option held for ⌥ Space)
+        src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStatePrivate)
 
-        up = Quartz.CGEventCreateKeyboardEvent(None, 0x08, False)
+        # Explicitly release Option and Shift keys so the stroke is pure Cmd+C rather than ⌥⌘C
+        for key in (0x3A, 0x3D, 0x38, 0x3C):
+            rel = Quartz.CGEventCreateKeyboardEvent(src, key, False)
+            Quartz.CGEventSetFlags(rel, 0)
+            if target_pid:
+                try:
+                    Quartz.CGEventPostToPid(target_pid, rel)
+                except Exception:
+                    pass
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, rel)
+
+        # kVK_ANSI_C = 0x08
+        down = Quartz.CGEventCreateKeyboardEvent(src, 0x08, True)
+        Quartz.CGEventSetFlags(down, Quartz.kCGEventFlagMaskCommand)
+        up = Quartz.CGEventCreateKeyboardEvent(src, 0x08, False)
         Quartz.CGEventSetFlags(up, Quartz.kCGEventFlagMaskCommand)
+
+        if target_pid:
+            try:
+                Quartz.CGEventPostToPid(target_pid, down)
+                Quartz.CGEventPostToPid(target_pid, up)
+            except Exception:
+                pass
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
         return True
     except Exception:
         return False
 
 
-def capture_selected_text(timeout_sec: float = 0.12) -> str | None:
-    """Grabs selected text from the frontmost app via Cmd+C, then restores clipboard."""
+def capture_selected_text(target_pid: int | None = None, timeout_sec: float = 0.35) -> str | None:
+    """Grabs selected text from the frontmost app via Cmd+C, preserving existing clipboard."""
     if sys.platform != "darwin":
         return None
     try:
-        clipboard = QGuiApplication.clipboard()
-        if clipboard is None:
-            return None
-        old_text = clipboard.text()
+        from AppKit import NSPasteboard, NSPasteboardTypeString
 
-        # Unique token unlikely to collide with actual clipboard text
-        sentinel = f"__diplomat_capture_{time.time_ns()}__"
-        clipboard.setText(sentinel)
+        pb = NSPasteboard.generalPasteboard()
+        initial_change_count = pb.changeCount()
+        old_text = pb.stringForType_(NSPasteboardTypeString)
 
-        if not simulate_copy():
-            clipboard.setText(old_text)
+        if not simulate_copy(target_pid=target_pid):
             return None
 
-        # Give target app time to process Cmd+C
+        # Give target app time to process Cmd+C and write to pasteboard
         start = time.monotonic()
         captured: str | None = None
         while time.monotonic() - start < timeout_sec:
             QCoreApplication.processEvents()
-            current = clipboard.text()
-            if current and current != sentinel:
-                captured = current
+            if pb.changeCount() != initial_change_count:
+                captured = pb.stringForType_(NSPasteboardTypeString)
                 break
             time.sleep(0.015)
 
-        # Restore previous clipboard content so user's clipboard is preserved
-        clipboard.setText(old_text)
+        if captured is not None:
+            # Restore previous clipboard content so user's clipboard is preserved
+            pb.clearContents()
+            if old_text is not None:
+                pb.setString_forType_(old_text, NSPasteboardTypeString)
+            cleaned = captured.strip()
+            return cleaned if cleaned else None
 
-        cleaned = captured.strip() if captured else ""
-        return cleaned if cleaned and cleaned != sentinel else None
+        return None
     except Exception:
         return None
 
@@ -148,8 +187,29 @@ def is_front_element_editable(front_app: Any | None = None) -> bool:
         if not app_elem:
             return False
 
-        err, elem = AX.AXUIElementCopyAttributeValue(app_elem, "AXFocusedUIElement", None)
-        if err != 0 or not elem:
+        # For Chromium and Electron apps (Teams, Chrome, Slack, VS Code), activate AX tree
+        AX.AXUIElementSetAttributeValue(app_elem, "AXManualAccessibility", True)
+
+        elem = None
+        err, focused = AX.AXUIElementCopyAttributeValue(app_elem, "AXFocusedUIElement", None)
+        if err == 0 and focused:
+            elem = focused
+        else:
+            # Fallback: check focused window's focused element
+            err_w, win = AX.AXUIElementCopyAttributeValue(app_elem, "AXFocusedWindow", None)
+            if err_w == 0 and win:
+                err_f, f_elem = AX.AXUIElementCopyAttributeValue(win, "AXFocusedUIElement", None)
+                if err_f == 0 and f_elem:
+                    elem = f_elem
+
+        if not elem:
+            # Also try system wide focused element
+            sys_elem = AX.AXUIElementCreateSystemWide()
+            err_s, s_elem = AX.AXUIElementCopyAttributeValue(sys_elem, "AXFocusedUIElement", None)
+            if err_s == 0 and s_elem:
+                elem = s_elem
+
+        if not elem:
             return False
 
         # Check if selected text or value is settable (editable)
@@ -162,7 +222,7 @@ def is_front_element_editable(front_app: Any | None = None) -> bool:
             return True
 
         err_role, role = AX.AXUIElementCopyAttributeValue(elem, "AXRole", None)
-        if err_role == 0 and role in ("AXTextArea", "AXTextField"):
+        if err_role == 0 and role in ("AXTextArea", "AXTextField", "AXComboBox", "AXSearchField"):
             return True
 
         return False
