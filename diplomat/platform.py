@@ -131,6 +131,45 @@ def capture_selected_text(timeout_sec: float = 0.12) -> str | None:
         return None
 
 
+def is_front_element_editable(front_app: Any | None = None) -> bool:
+    """Return True if the focused UI element in the frontmost app is an editable text field/area."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        import ApplicationServices as AX
+
+        if front_app is None:
+            front_app = get_frontmost_app()
+        if front_app is None:
+            return False
+
+        pid = front_app.processIdentifier()
+        app_elem = AX.AXUIElementCreateApplication(pid)
+        if not app_elem:
+            return False
+
+        err, elem = AX.AXUIElementCopyAttributeValue(app_elem, "AXFocusedUIElement", None)
+        if err != 0 or not elem:
+            return False
+
+        # Check if selected text or value is settable (editable)
+        err_sel, sel_set = AX.AXUIElementIsAttributeSettable(elem, "AXSelectedText", None)
+        if err_sel == 0 and sel_set:
+            return True
+
+        err_val, val_set = AX.AXUIElementIsAttributeSettable(elem, "AXValue", None)
+        if err_val == 0 and val_set:
+            return True
+
+        err_role, role = AX.AXUIElementCopyAttributeValue(elem, "AXRole", None)
+        if err_role == 0 and role in ("AXTextArea", "AXTextField"):
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
 LAUNCH_AGENT_LABEL = "com.diplomat.app"
 
 

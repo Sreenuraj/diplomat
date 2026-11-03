@@ -742,6 +742,7 @@ class PopupWindow(QWidget):
         self._current_variant_idx: int = -1
         self._history: list[dict] = []
         self._shortcuts_dialog: ShortcutsDialog | None = None
+        self._auto_paste_on_finish: bool = False
         self._server_probed.connect(self._on_models_queried)
 
         self._setup_window()
@@ -792,14 +793,14 @@ class PopupWindow(QWidget):
 
         header.addStretch(1)
 
-        self.clear_btn = QPushButton("Clear")
+        self.clear_btn = QPushButton("Clear (⌘K)")
         self.clear_btn.setObjectName("linkButton")
         self.clear_btn.setToolTip("Clear draft, reply context and output (⌘K)")
         self.clear_btn.clicked.connect(self.clear_all)
         self.clear_btn.setEnabled(False)
         header.addWidget(self.clear_btn)
 
-        self.quit_btn = QPushButton("Quit")
+        self.quit_btn = QPushButton("Quit (⌘Q)")
         self.quit_btn.setObjectName("linkButton")
         self.quit_btn.setToolTip("Quit Diplomat completely (⌘Q)")
         self.quit_btn.clicked.connect(self.quit_requested.emit)
@@ -823,10 +824,10 @@ class PopupWindow(QWidget):
         # 2a. Seamless typing area
         self.draft_edit = _DraftEdit()
         self.draft_edit.setObjectName("chatDraftEdit")
-        self.draft_edit.setPlaceholderText("Type or speak (⌘D)…  (⌘↩ to generate)")
+        self.draft_edit.setPlaceholderText("Type or speak (⌘D)…  (⌘↩ to generate & paste)")
         self.draft_edit.setFixedHeight(78)
         self.draft_edit.textChanged.connect(self._on_draft_changed)
-        self.draft_edit.submit_requested.connect(self.trigger_generate)
+        self.draft_edit.submit_requested.connect(self._on_primary_shortcut_pressed)
         input_layout.addWidget(self.draft_edit)
 
         # 2b. Collapsible "Replying to…" section inside container
@@ -854,7 +855,7 @@ class PopupWindow(QWidget):
         self.context_edit.setPlaceholderText("Paste the message you are replying to…")
         self.context_edit.setFixedHeight(56)
         self.context_edit.setVisible(False)
-        self.context_edit.submit_requested.connect(self.trigger_generate)
+        self.context_edit.submit_requested.connect(self._on_primary_shortcut_pressed)
         input_layout.addWidget(self.context_edit)
 
         # 2c. Toolbar directly below typing area
@@ -936,10 +937,10 @@ class PopupWindow(QWidget):
         toolbar.addWidget(self.mic_btn)
 
         # Generate button
-        self.generate_btn = QPushButton("Generate")
+        self.generate_btn = QPushButton("Generate & Paste (⌘↩)")
         self.generate_btn.setObjectName("primaryButton")
         self.generate_btn.setMinimumWidth(88)
-        self.generate_btn.setToolTip("Generate (⌘↩) or Regenerate (⌘R)")
+        self.generate_btn.setToolTip("Generate polished rewrite and auto-paste into previous app (⌘↩)")
         self.generate_btn.clicked.connect(self._on_generate_button_clicked)
         toolbar.addWidget(self.generate_btn)
 
@@ -1052,16 +1053,16 @@ class PopupWindow(QWidget):
         self.variant_container.setVisible(False)
         footer.addWidget(self.variant_container)
 
-        self.shorter_btn = QPushButton("Shorter")
+        self.shorter_btn = QPushButton("Shorter (⌘S)")
         self.shorter_btn.setObjectName("linkButton")
         self.shorter_btn.setToolTip("Condense output to be shorter and punchier (⌘S)")
         self.shorter_btn.clicked.connect(self.trigger_shorter)
         self.shorter_btn.setEnabled(False)
         footer.addWidget(self.shorter_btn)
 
-        self.copy_btn = QPushButton("Copy")
+        self.copy_btn = QPushButton("Copy (↩)")
         self.copy_btn.setObjectName("linkButton")
-        self.copy_btn.setToolTip("Copy to clipboard (already copied automatically)")
+        self.copy_btn.setToolTip("Copy polished text to clipboard (↩)")
         self.copy_btn.clicked.connect(self.copy_output)
         self.copy_btn.setEnabled(False)
         footer.addWidget(self.copy_btn)
@@ -1079,10 +1080,10 @@ class PopupWindow(QWidget):
     def _bind_shortcuts(self) -> None:
         for seq in ("Ctrl+Return", "Ctrl+Enter", "Meta+Return", "Meta+Enter"):
             sc = QShortcut(QKeySequence(seq), self)
-            sc.activated.connect(self.trigger_generate)
+            sc.activated.connect(self._on_primary_shortcut_pressed)
 
         regen_sc = QShortcut(QKeySequence("Ctrl+R"), self)
-        regen_sc.activated.connect(self.trigger_generate)
+        regen_sc.activated.connect(self.trigger_generate_and_paste)
 
         clear_sc = QShortcut(QKeySequence("Ctrl+K"), self)
         clear_sc.activated.connect(self.clear_all)
@@ -1453,7 +1454,19 @@ class PopupWindow(QWidget):
         if self.is_generating():
             self.cancel_generation()
         else:
-            self.trigger_generate()
+            self.trigger_generate_and_paste()
+
+    def _on_primary_shortcut_pressed(self) -> None:
+        if self.is_generating():
+            return
+        if self.draft_edit.toPlainText().strip():
+            self.trigger_generate_and_paste()
+        elif self.output_edit.toPlainText().strip():
+            self.paste_and_close()
+
+    def trigger_generate_and_paste(self, extra_instruction: str | None = None) -> None:
+        self._auto_paste_on_finish = True
+        self.trigger_generate(extra_instruction=extra_instruction)
 
     def trigger_generate(self, extra_instruction: str | None = None) -> None:
         draft = self.draft_edit.toPlainText().strip()
@@ -1563,6 +1576,7 @@ class PopupWindow(QWidget):
         self._update_counter()
 
     def cancel_generation(self) -> None:
+        self._auto_paste_on_finish = False
         if self._worker is not None:
             self._worker.cancel()
             self._worker = None
@@ -1624,16 +1638,23 @@ class PopupWindow(QWidget):
         self._update_counter()
         self._update_controls()
 
+        if self._auto_paste_on_finish:
+            self._auto_paste_on_finish = False
+            if result.text.strip():
+                self.paste_and_close()
+
     def _on_worker_failed(self, kind: str, message: str) -> None:
         if self.sender() is not self._worker:
             return
         self._worker = None
+        self._auto_paste_on_finish = False
         self.show_error(kind, message)
 
     def _on_worker_cancelled(self) -> None:
         if self.sender() is not self._worker:
             return
         self._worker = None
+        self._auto_paste_on_finish = False
         self.status_label.setText("Cancelled")
         self._update_controls()
 
@@ -1658,15 +1679,15 @@ class PopupWindow(QWidget):
         has_any = has_draft or has_context or has_output or (self._last_error_kind is not None) or self.is_recording()
 
         if self.is_generating():
-            self.generate_btn.setText("Cancel")
+            self.generate_btn.setText("Cancel (Esc)")
             self.generate_btn.setEnabled(True)
         else:
             if self._last_error_kind is not None:
-                self.generate_btn.setText("Retry")
+                self.generate_btn.setText("Retry (⌘↩)")
             elif has_output or self._last_result is not None:
-                self.generate_btn.setText("Regenerate")
+                self.generate_btn.setText("Regenerate & Paste (⌘↩)")
             else:
-                self.generate_btn.setText("Generate")
+                self.generate_btn.setText("Generate & Paste (⌘↩)")
             self.generate_btn.setEnabled(has_draft and not self.is_recording())
 
         self.clear_btn.setEnabled(has_any or self.is_generating() or self.is_recording())
@@ -2037,7 +2058,7 @@ class ShortcutsDialog(QDialog):
         self.global_hotkey_lbl.setObjectName("keyCap")
         self.global_hotkey_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         grid1.addWidget(self.global_hotkey_lbl, 0, 0, Qt.AlignmentFlag.AlignLeft)
-        d1 = QLabel("Show / Hide Diplomat — grabs selected text in any app as draft")
+        d1 = QLabel("Show / Hide Diplomat — smart capture (non-editable selection → reply; editable → draft)")
         d1.setObjectName("shortcutDesc")
         grid1.addWidget(d1, 0, 1)
 
@@ -2045,7 +2066,7 @@ class ShortcutsDialog(QDialog):
         self.global_reply_lbl.setObjectName("keyCap")
         self.global_reply_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         grid1.addWidget(self.global_reply_lbl, 1, 0, Qt.AlignmentFlag.AlignLeft)
-        d2 = QLabel("Reply to Selection — grabs selected text as 'Replying to' context & focuses draft")
+        d2 = QLabel("Reply to Selection — explicitly grabs selected text as 'Replying to' context")
         d2.setObjectName("shortcutDesc")
         grid1.addWidget(d2, 1, 1)
 
@@ -2066,8 +2087,8 @@ class ShortcutsDialog(QDialog):
         grid2.setVerticalSpacing(7)
 
         shortcuts = [
-            ("⌘ ↩  /  Ctrl+Enter", "Generate or regenerate polished rewrite"),
-            ("⇧ ↩  (Shift+Enter)", "Auto-paste polished rewrite directly into previous app"),
+            ("⌘ ↩  /  Ctrl+Enter", "Generate polished rewrite & auto-paste into previous app"),
+            ("⇧ ↩  (Shift+Enter)", "Paste current output directly into previous app & close"),
             ("↩  (Enter in output)", "Copy polished text to clipboard & close"),
             ("⌘ D", "Dictate voice input (WhatsApp-style mic)"),
             ("⌘ S", "Make shorter (condense text)"),

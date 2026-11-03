@@ -459,7 +459,11 @@ class DiplomatApp(QObject):
         if self.cfg.get("capture_selection", True):
             captured = platform_mod.capture_selected_text()
             if captured:
-                self.popup.set_captured_draft(captured)
+                is_editable = platform_mod.is_front_element_editable(front_app)
+                if is_editable:
+                    self.popup.set_captured_draft(captured)
+                else:
+                    self.popup.set_captured_context(captured)
 
         self.popup.show_popup()
 

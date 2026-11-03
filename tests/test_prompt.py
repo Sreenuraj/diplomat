@@ -332,7 +332,7 @@ def test_popup_ui_end_to_end(tmp_path):
     app.processEvents()
 
     assert popup.output_edit.toPlainText() == "Hi Priya, I can have the fix ready by Friday."
-    assert popup.generate_btn.text() == "Regenerate"
+    assert "Regenerate" in popup.generate_btn.text()
     assert popup.copy_btn.isEnabled()
     assert popup.clear_btn.isEnabled()
     assert popup.copy_output() is True
@@ -344,7 +344,7 @@ def test_popup_ui_end_to_end(tmp_path):
     assert popup.draft_edit.toPlainText() == ""
     assert popup.context_edit.toPlainText() == ""
     assert popup.output_edit.toPlainText() == ""
-    assert popup.generate_btn.text() == "Generate"
+    assert "Generate" in popup.generate_btn.text()
     assert not popup.generate_btn.isEnabled()
     assert not popup.copy_btn.isEnabled()
     assert not popup.clear_btn.isEnabled()
@@ -376,7 +376,7 @@ def test_popup_error_and_retry_state(tmp_path):
     assert not popup.error_label.isHidden()
     assert "Settings" in popup.error_label.text()
     assert not popup.open_settings_inline_btn.isHidden()
-    assert popup.generate_btn.text() == "Retry"
+    assert "Retry" in popup.generate_btn.text()
 
 
 # ---- step 3 & 4: settings dialog, hotkey recorder, launcher scripts

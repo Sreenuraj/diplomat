@@ -48,28 +48,32 @@ On first run, `./run.sh` creates `.venv`, installs `requirements.txt`, starts Di
 
 ## Using Diplomat
 
-Press **`⌥ Space`** from any app (or click the **D** icon in the macOS menu bar) to show or hide the floating window. Your cursor goes straight to the draft box.
+You only need to remember **2 shortcuts**:
+1. **`⌥ Space`**: Open or close Diplomat anywhere.
+   - Highlighted a coworker's message (non-editable)? It automatically populates **"Replying to:"** and focuses the draft box.
+   - Highlighted a rough draft in your compose box (editable)? It automatically populates the **Draft box**.
+   - Nothing highlighted? Simply opens Diplomat ready to type or dictate (`⌘D`).
+2. **`⌘↩`**: **Generate & Paste** — Diplomat generates your polished rewrite, copies it to the clipboard, automatically pastes it directly into your previous app (Slack, Email, Browser), and closes!
 
-When generated, the polished message is **automatically copied to your clipboard** immediately — no extra click needed.
+All buttons in the UI also show their hotkeys directly on the button so you never have to memorize them:
 
-| Shortcut | Action |
-|----------|--------|
-| `⌥ Space` (configurable) | Show / hide popup (grabs selected text in any app as draft) |
-| `⌥⇧ Space` (configurable) | Reply to selection (grabs selected text as reply context & focuses draft) |
-| `⌘D` | Toggle voice dictation (WhatsApp-style mic) |
-| `⌘↩` | Generate (auto-copies to clipboard) |
-| `⇧↩` | Paste directly into previous app and close |
-| `↩` in output | Copy to clipboard and close |
-| `⌘S` | Make output shorter & punchier |
-| `⌥[` / `⌥]` | Cycle through generated variants (1/2, 2/2) |
-| `⌥C` | Move draft text into "Replying to" context |
-| `⌘H` | Open recent rewrites history |
+| Shortcut | Button / Action |
+|----------|-----------------|
+| `⌥ Space` | Show / hide popup with **smart selection capture** (non-editable → reply; editable → draft) |
+| `⌘↩` | **Generate & Paste** (rewrites, copies to clipboard, auto-pastes into previous app, closes) |
+| `⌘D` | Dictate voice draft with local Whisper (WhatsApp-style mic) |
+| `⌘S` | **Shorter (⌘S)** — condense output to be shorter and punchier |
+| `⌥[` / `⌥]` | Cycle through generated variants (`◀ 1/2 ▶`) |
+| `⌥C` | **Move draft to reply (⌥C)** — transfer draft into "Replying to" context |
+| `↩` | **Copy (↩)** — copy output to clipboard and close without pasting |
+| `⇧↩` | **Paste (⇧↩)** — paste output directly into previous app and close |
+| `⌘H` | Open recent rewrites history (last 20 outputs) |
 | `⌨` / `⌘/` | Open Shortcuts & Hotkeys cheatsheet |
-| `⌘R` | Regenerate |
-| `⌘K` | Clear draft, reply context, and output |
+| `⌘K` | **Clear (⌘K)** — clear draft, reply context, and output |
 | `⌃⌘Space` | Emoji / symbols palette |
 | `⌘,` | Open Settings |
-| `Esc` | Cancel recording / generation, or close popup |
+| `Esc` | Cancel voice recording / cancel generation / close popup |
+| `⌘Q` | **Quit (⌘Q)** — quit Diplomat completely |
 
 ### Voice dictation (speak instead of typing)
 

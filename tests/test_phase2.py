@@ -183,6 +183,34 @@ def test_shortcuts_dialog(tmp_path):
     dlg.close()
 
 
+def test_streamlined_shortcuts_and_buttons(tmp_path):
+    app = _get_app()
+    cfg_file = tmp_path / "config.json"
+    cfg = config.load(cfg_file)
+
+    win = ui.PopupWindow(cfg=cfg, config_path=cfg_file)
+
+    # Check button hotkey labels
+    assert "⌘K" in win.clear_btn.text()
+    assert "⌘Q" in win.quit_btn.text()
+    assert "⌘↩" in win.generate_btn.text()
+    assert "⌘S" in win.shorter_btn.text()
+    assert "↩" in win.copy_btn.text()
+    assert "⇧↩" in win.paste_btn.text()
+    assert "⌥C" in win.move_to_reply_btn.text()
+
+    # Test is_front_element_editable smoke test
+    platform_mod.is_front_element_editable()
+
+    # Test auto-paste flag on primary shortcut
+    win.draft_edit.setPlainText("Test message")
+    assert win.generate_btn.isEnabled()
+    win.trigger_generate_and_paste()
+    assert win._auto_paste_on_finish is True
+    win.cancel_generation()
+    assert win._auto_paste_on_finish is False
+
+
 def test_autostart_logic(tmp_path, monkeypatch):
     test_plist = tmp_path / "test_autostart.plist"
     monkeypatch.setattr(platform_mod, "get_launch_agent_path", lambda: test_plist)
