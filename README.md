@@ -147,6 +147,7 @@ Settings are stored in a single JSON file:
   "slop_rules": true,
   "tone_open": false,
   "whisper_model": "base",
+  "capture_selection": true,
   "sliders": {
     "formality": 50,
     "warmth": 50,
@@ -203,6 +204,7 @@ To evaluate prompt changes against your local model across all 15 sample inputs:
 | Preamble such as `"Here's the rewritten message:"` appears | Common preambles, markdown code fences, and wrapping quotes are stripped automatically. |
 | Microphone error or `No speech detected` | Allow microphone access in **System Settings → Privacy & Security → Microphone** for your terminal or Python, check the selected input in Sound settings, or try speaking closer to the mic. |
 | `Whisper is not installed` | Run `.venv/bin/pip install openai-whisper` or ensure `whisper` is available on your PATH. |
+| View live debug logs | Run `tail -f ~/Library/Logs/Diplomat.log` in terminal to view hotkey, selection capture, and generation events. |
 
 ## Privacy
 
