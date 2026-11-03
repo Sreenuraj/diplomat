@@ -54,14 +54,17 @@ When generated, the polished message is **automatically copied to your clipboard
 
 | Shortcut | Action |
 |----------|--------|
-| `⌥ Space` (configurable) | Show / hide the popup (grabs selected text if highlighted) |
+| `⌥ Space` (configurable) | Show / hide popup (grabs selected text in any app as draft) |
+| `⌥⇧ Space` (configurable) | Reply to selection (grabs selected text as reply context & focuses draft) |
 | `⌘D` | Toggle voice dictation (WhatsApp-style mic) |
 | `⌘↩` | Generate (auto-copies to clipboard) |
 | `⇧↩` | Paste directly into previous app and close |
-| `↩` in the output box | Copy to clipboard and close |
+| `↩` in output | Copy to clipboard and close |
 | `⌘S` | Make output shorter & punchier |
 | `⌥[` / `⌥]` | Cycle through generated variants (1/2, 2/2) |
+| `⌥C` | Move draft text into "Replying to" context |
 | `⌘H` | Open recent rewrites history |
+| `⌨` / `⌘/` | Open Shortcuts & Hotkeys cheatsheet |
 | `⌘R` | Regenerate |
 | `⌘K` | Clear draft, reply context, and output |
 | `⌃⌘Space` | Emoji / symbols palette |

@@ -118,6 +118,71 @@ def test_paste_and_selection_capture(tmp_path):
     assert QGuiApplication.clipboard().text() == "Polished response ready to paste"
 
 
+def test_reply_to_selection_and_move_draft(tmp_path):
+    app = _get_app()
+    cfg_file = tmp_path / "config.json"
+    cfg = config.load(cfg_file)
+
+    win = ui.PopupWindow(cfg=cfg, config_path=cfg_file)
+    assert win.context_edit.isHidden()
+
+    # 1. Selection capture directly into "Replying to:" (⌥⇧ Space)
+    win.set_captured_context("Can you finish the report by 3pm?")
+    assert win.context_edit.toPlainText() == "Can you finish the report by 3pm?"
+    assert not win.context_edit.isHidden()
+    assert win.draft_edit.toPlainText() == ""
+
+    # 2. Moving draft into reply context via ⌥C
+    win.draft_edit.setPlainText("Accidentally typed message here")
+    win._update_controls()
+    assert not win.move_to_reply_btn.isHidden()
+    win.move_draft_to_reply()
+    assert win.context_edit.toPlainText() == "Accidentally typed message here"
+    assert not win.context_edit.isHidden()
+    assert win.draft_edit.toPlainText() == ""
+    assert win.move_to_reply_btn.isHidden()
+
+
+def test_reply_hotkey_parsing():
+    from diplomat import main as main_mod
+
+    assert config.DEFAULTS["reply_hotkey"] == "option+shift+space"
+    pynput_spec = main_mod.to_pynput_hotkey("option+shift+space")
+    assert pynput_spec == "<alt>+<shift>+<space>"
+    if sys.platform == "darwin":
+        vk, mods = main_mod.to_carbon_hotkey("option+shift+space")
+        assert vk == 0x31  # Space
+        assert mods == (1 << 11) | (1 << 9)  # optionKey | shiftKey
+        assert main_mod.format_hotkey_label("option+shift+space") == "⌥ ⇧ Space"
+
+
+def test_shortcuts_dialog(tmp_path):
+    app = _get_app()
+    cfg_file = tmp_path / "config.json"
+    cfg = config.load(cfg_file)
+
+    win = ui.PopupWindow(cfg=cfg, config_path=cfg_file)
+    assert win.shortcuts_btn is not None
+    assert win._shortcuts_dialog is None
+
+    # Click / trigger shortcuts dialog
+    win.show_shortcuts_dialog()
+    dlg = win._shortcuts_dialog
+    assert dlg is not None
+    assert dlg.global_hotkey_lbl.text() == "⌥ Space"
+    assert dlg.global_reply_lbl.text() == "⌥ ⇧ Space"
+
+    # Reload config with custom hotkeys
+    new_cfg = dict(cfg)
+    new_cfg["hotkey"] = "ctrl+space"
+    new_cfg["reply_hotkey"] = "ctrl+shift+space"
+    win.reload_config(new_cfg)
+    assert dlg.global_hotkey_lbl.text() == "⌃ Space"
+    assert dlg.global_reply_lbl.text() == "⌃ ⇧ Space"
+
+    dlg.close()
+
+
 def test_autostart_logic(tmp_path, monkeypatch):
     test_plist = tmp_path / "test_autostart.plist"
     monkeypatch.setattr(platform_mod, "get_launch_agent_path", lambda: test_plist)

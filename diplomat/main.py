@@ -167,21 +167,7 @@ def to_carbon_hotkey(spec: str) -> tuple[int, int]:
     return keycode, modifiers
 
 
-def format_hotkey_label(spec: str) -> str:
-    """Format 'option+space' into macOS-friendly '⌥ Space' for menus."""
-    symbols = {
-        "option": "⌥",
-        "opt": "⌥",
-        "alt": "⌥",
-        "cmd": "⌘",
-        "command": "⌘",
-        "ctrl": "⌃",
-        "control": "⌃",
-        "shift": "⇧",
-        "space": "Space",
-    }
-    parts = [p.strip().lower() for p in (spec or "").split("+") if p.strip()]
-    return " ".join(symbols.get(p, p.upper()) for p in parts) or spec
+format_hotkey_label = config_mod.format_hotkey_label
 
 
 class HotkeyBridge(QObject):
@@ -204,25 +190,20 @@ _EventHandlerProcPtr = ctypes.CFUNCTYPE(
 
 
 class _CarbonHotkeyBackend:
-    """Main-thread macOS Carbon RegisterEventHotKey backend.
-
-    Avoids calling TISCopyCurrentKeyboardInputSource from a background thread
-    (which crashes with EXC_BREAKPOINT / SIGTRAP on modern macOS).
-    """
+    """Main-thread macOS Carbon RegisterEventHotKey backend supporting multiple hotkeys."""
 
     kEventClassKeyboard = 0x6B657962  # 'keyb'
     kEventHotKeyPressed = 6
     SIGNATURE = 0x44504C4D  # 'DPLM'
 
-    def __init__(self, on_trigger: Callable[[], None]):
+    def __init__(self):
         lib_path = ctypes.util.find_library("Carbon")
         if not lib_path:
             raise RuntimeError("Carbon framework not available")
         self._carbon = ctypes.cdll.LoadLibrary(lib_path)
-        self._on_trigger = on_trigger
-        self._hotkey_ref = ctypes.c_void_p()
+        self._callbacks: dict[int, Callable[[], None]] = {}
+        self._hotkey_refs: dict[int, ctypes.c_void_p] = {}
         self._handler_ref = ctypes.c_void_p()
-        self._hotkey_counter = 0
 
         self._carbon.GetApplicationEventTarget.argtypes = []
         self._carbon.GetApplicationEventTarget.restype = ctypes.c_void_p
@@ -250,14 +231,35 @@ class _CarbonHotkeyBackend:
         self._carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
         self._carbon.UnregisterEventHotKey.restype = ctypes.c_int32
 
-        def _handler(_next_handler, _event, _user_data) -> int:
-            try:
-                self._on_trigger()
-            except Exception:
-                pass
+        self._carbon.GetEventParameter.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        self._carbon.GetEventParameter.restype = ctypes.c_int32
+
+        def _handler(_next_handler, event, _user_data) -> int:
+            hk_id = _EventHotKeyID()
+            status = self._carbon.GetEventParameter(
+                event,
+                0x2D2D2D2D,  # kEventParamDirectObject ('----')
+                0x686B6964,  # typeEventHotKeyID ('hkid')
+                None,
+                ctypes.sizeof(_EventHotKeyID),
+                None,
+                ctypes.byref(hk_id),
+            )
+            if status == 0 and hk_id.id in self._callbacks:
+                try:
+                    self._callbacks[hk_id.id]()
+                except Exception:
+                    pass
             return 0
 
-        # Keep a strong reference to the ctypes callback for the lifetime of the backend
         self._c_handler = _EventHandlerProcPtr(_handler)
         spec = _EventTypeSpec(self.kEventClassKeyboard, self.kEventHotKeyPressed)
         target = self._carbon.GetApplicationEventTarget()
@@ -272,11 +274,10 @@ class _CarbonHotkeyBackend:
         if status != 0:
             raise RuntimeError(f"InstallEventHandler failed with OSStatus {status}")
 
-    def register(self, spec: str) -> None:
-        self.unregister()
+    def register(self, spec: str, callback: Callable[[], None], hotkey_id: int = 1) -> None:
+        self.unregister(hotkey_id)
         keycode, modifiers = to_carbon_hotkey(spec)
-        self._hotkey_counter += 1
-        hk_id = _EventHotKeyID(self.SIGNATURE, self._hotkey_counter)
+        hk_id = _EventHotKeyID(self.SIGNATURE, hotkey_id)
         target = self._carbon.GetApplicationEventTarget()
         ref = ctypes.c_void_p()
         status = self._carbon.RegisterEventHotKey(
@@ -289,32 +290,57 @@ class _CarbonHotkeyBackend:
         )
         if status != 0 or not ref.value:
             raise RuntimeError(f"RegisterEventHotKey returned OSStatus {status}")
-        self._hotkey_ref = ref
+        self._hotkey_refs[hotkey_id] = ref
+        self._callbacks[hotkey_id] = callback
 
-    def unregister(self) -> None:
-        if self._hotkey_ref and self._hotkey_ref.value:
-            try:
-                self._carbon.UnregisterEventHotKey(self._hotkey_ref)
-            except Exception:
-                pass
-            self._hotkey_ref = ctypes.c_void_p()
+    def unregister(self, hotkey_id: int | None = None) -> None:
+        if hotkey_id is not None:
+            ref = self._hotkey_refs.pop(hotkey_id, None)
+            self._callbacks.pop(hotkey_id, None)
+            if ref and ref.value:
+                try:
+                    self._carbon.UnregisterEventHotKey(ref)
+                except Exception:
+                    pass
+        else:
+            for hid, ref in list(self._hotkey_refs.items()):
+                if ref and ref.value:
+                    try:
+                        self._carbon.UnregisterEventHotKey(ref)
+                    except Exception:
+                        pass
+            self._hotkey_refs.clear()
+            self._callbacks.clear()
+
+
+_SHARED_CARBON_BACKEND: _CarbonHotkeyBackend | None = None
+
+
+def _get_carbon_backend() -> _CarbonHotkeyBackend:
+    global _SHARED_CARBON_BACKEND
+    if _SHARED_CARBON_BACKEND is None:
+        _SHARED_CARBON_BACKEND = _CarbonHotkeyBackend()
+    return _SHARED_CARBON_BACKEND
 
 
 class HotkeyManager:
     """Manage the global hotkey listener lifecycle."""
 
-    def __init__(self, callback: Callable[[], None]):
+    def __init__(self, callback: Callable[[], None], hotkey_id: int = 1):
         self.bridge = HotkeyBridge()
         self.bridge.triggered.connect(callback)
+        self.hotkey_id = hotkey_id
         self._listener = None
-        self._carbon_backend: _CarbonHotkeyBackend | None = None
         self.current_spec: str = ""
         self.last_error: str | None = None
 
     def pause(self) -> None:
         """Temporarily unregister the hotkey (e.g. while recording a new shortcut)."""
-        if self._carbon_backend is not None:
-            self._carbon_backend.unregister()
+        if sys.platform == "darwin":
+            try:
+                _get_carbon_backend().unregister(self.hotkey_id)
+            except Exception:
+                pass
         elif self._listener is not None:
             self.stop()
 
@@ -328,9 +354,7 @@ class HotkeyManager:
         self.current_spec = spec
         if sys.platform == "darwin":
             try:
-                if self._carbon_backend is None:
-                    self._carbon_backend = _CarbonHotkeyBackend(self.bridge.triggered.emit)
-                self._carbon_backend.register(spec)
+                _get_carbon_backend().register(spec, self.bridge.triggered.emit, hotkey_id=self.hotkey_id)
                 self.last_error = None
                 return True
             except Exception as exc:
@@ -356,8 +380,11 @@ class HotkeyManager:
             return False
 
     def stop(self) -> None:
-        if self._carbon_backend is not None:
-            self._carbon_backend.unregister()
+        if sys.platform == "darwin":
+            try:
+                _get_carbon_backend().unregister(self.hotkey_id)
+            except Exception:
+                pass
         if self._listener is not None:
             try:
                 self._listener.stop()
@@ -409,12 +436,15 @@ class DiplomatApp(QObject):
         self.popup.quit_requested.connect(self.shutdown)
         self.popup.config_changed.connect(self._on_config_changed)
 
-        self.hotkey = HotkeyManager(self._on_hotkey_triggered)
+        self.hotkey = HotkeyManager(self._on_hotkey_triggered, hotkey_id=1)
+        self.reply_hotkey = HotkeyManager(self._on_reply_hotkey_triggered, hotkey_id=2)
         if enable_hotkey:
             self.hotkey.start(self.cfg.get("hotkey", config_mod.DEFAULTS["hotkey"]))
+            self.reply_hotkey.start(self.cfg.get("reply_hotkey", config_mod.DEFAULTS["reply_hotkey"]))
 
         self.tray: QSystemTrayIcon | None = None
         self.toggle_action: QAction | None = None
+        self.reply_action: QAction | None = None
         self._setup_tray()
 
     def _on_hotkey_triggered(self) -> None:
@@ -433,6 +463,25 @@ class DiplomatApp(QObject):
 
         self.popup.show_popup()
 
+    def _on_reply_hotkey_triggered(self) -> None:
+        front_app = platform_mod.get_frontmost_app()
+        if front_app is not None:
+            self.popup.set_previous_app(front_app)
+
+        captured = ""
+        if self.cfg.get("capture_selection", True):
+            captured = platform_mod.capture_selected_text()
+
+        if captured:
+            self.popup.set_captured_context(captured)
+        elif self.popup.isVisible():
+            self.popup.hide_popup()
+            return
+        else:
+            self.popup.open_reply_panel()
+
+        self.popup.show_popup()
+
     def _setup_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
@@ -443,6 +492,13 @@ class DiplomatApp(QObject):
         hotkey_label = format_hotkey_label(self.cfg.get("hotkey", config_mod.DEFAULTS["hotkey"]))
         self.toggle_action = menu.addAction(f"Show / Hide Diplomat ({hotkey_label})")
         self.toggle_action.triggered.connect(self._on_hotkey_triggered)
+
+        reply_label = format_hotkey_label(self.cfg.get("reply_hotkey", config_mod.DEFAULTS["reply_hotkey"]))
+        self.reply_action = menu.addAction(f"Reply to Selection ({reply_label})")
+        self.reply_action.triggered.connect(self._on_reply_hotkey_triggered)
+
+        shortcuts_action = menu.addAction("Keyboard Shortcuts…")
+        shortcuts_action.triggered.connect(self.popup.show_shortcuts_dialog)
 
         settings_action = menu.addAction("Settings…")
         settings_action.triggered.connect(self.open_settings)
@@ -467,8 +523,13 @@ class DiplomatApp(QObject):
         new_hotkey = cfg.get("hotkey", config_mod.DEFAULTS["hotkey"])
         if new_hotkey != self.hotkey.current_spec and self.hotkey.current_spec:
             self.hotkey.start(new_hotkey)
+        new_reply = cfg.get("reply_hotkey", config_mod.DEFAULTS["reply_hotkey"])
+        if new_reply != self.reply_hotkey.current_spec and self.reply_hotkey.current_spec:
+            self.reply_hotkey.start(new_reply)
         if self.toggle_action is not None:
             self.toggle_action.setText(f"Show / Hide Diplomat ({format_hotkey_label(new_hotkey)})")
+        if self.reply_action is not None:
+            self.reply_action.setText(f"Reply to Selection ({format_hotkey_label(new_reply)})")
         self.cfg = cfg
         self.popup.reload_config(cfg)
 
@@ -477,6 +538,20 @@ class DiplomatApp(QObject):
         if self.toggle_action is not None:
             self.toggle_action.setText(f"Show / Hide Diplomat ({format_hotkey_label(spec)})")
         return ok, self.hotkey.last_error
+
+    def _rebind_reply_hotkey(self, spec: str) -> tuple[bool, str | None]:
+        ok = self.reply_hotkey.start(spec)
+        if self.reply_action is not None:
+            self.reply_action.setText(f"Reply to Selection ({format_hotkey_label(spec)})")
+        return ok, self.reply_hotkey.last_error
+
+    def _pause_hotkeys(self) -> None:
+        self.hotkey.pause()
+        self.reply_hotkey.pause()
+
+    def _resume_hotkeys(self) -> None:
+        self.hotkey.resume()
+        self.reply_hotkey.resume()
 
     def open_settings(self) -> SettingsDialog:
         """Open the one-screen Settings dialog above the always-on-top popup."""
@@ -488,8 +563,9 @@ class DiplomatApp(QObject):
             cfg=self.cfg,
             config_path=self.config_path,
             hotkey_status_fn=self._rebind_hotkey,
-            hotkey_pause_fn=self.hotkey.pause,
-            hotkey_resume_fn=self.hotkey.resume,
+            reply_hotkey_status_fn=self._rebind_reply_hotkey,
+            hotkey_pause_fn=self._pause_hotkeys,
+            hotkey_resume_fn=self._resume_hotkeys,
             parent=self.popup,
         )
         dlg.config_changed.connect(self._on_config_changed)
@@ -502,12 +578,15 @@ class DiplomatApp(QObject):
         resolved_path = self.config_path or config_mod.config_path()
         hotkey_spec = self.cfg.get("hotkey", config_mod.DEFAULTS["hotkey"])
         hotkey_label = format_hotkey_label(hotkey_spec)
+        reply_spec = self.cfg.get("reply_hotkey", config_mod.DEFAULTS["reply_hotkey"])
+        reply_label = format_hotkey_label(reply_spec)
         model = self.cfg.get("model") or "(auto-detect on first request)"
         print(
             f"Diplomat running (PID {os.getpid()})\n"
             f"  Provider : {self.cfg.get('provider')} ({self.cfg.get('base_url')})\n"
             f"  Model    : {model}\n"
             f"  Hotkey   : {hotkey_label} ({hotkey_spec})\n"
+            f"  Reply    : {reply_label} ({reply_spec})\n"
             f"  Config   : {resolved_path}\n"
             f"Stop with Ctrl+C in this terminal, ⌘Q, or the 'Quit' button in the UI.",
             flush=True,
@@ -518,6 +597,7 @@ class DiplomatApp(QObject):
             return
         self._stopped = True
         self.hotkey.stop()
+        self.reply_hotkey.stop()
         if self.settings_dialog is not None:
             self.settings_dialog.close()
         if self.tray is not None:
@@ -538,7 +618,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setQuitOnLastWindowClosed(False)
 
     controller = DiplomatApp(app, enable_hotkey=not args.no_hotkey)
-    app.aboutToQuit.connect(controller.hotkey.stop)
+    app.aboutToQuit.connect(controller.shutdown)
 
     # Periodic heartbeat so Python runs signal handlers (Ctrl+C / SIGINT) while inside Qt's C++ loop
     sig_timer = QTimer(app)

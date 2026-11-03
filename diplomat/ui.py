@@ -363,6 +363,31 @@ def build_stylesheet(dark: bool) -> str:
             font-size: 11.5px;
             font-weight: 600;
         }}
+        QLabel#dialogTitle {{
+            font-size: 15px;
+            font-weight: 700;
+            color: {t["text_fg"]};
+        }}
+        QLabel#sectionTitle {{
+            font-size: 10.5px;
+            font-weight: 700;
+            color: {t["muted_fg"]};
+            letter-spacing: 0.5px;
+        }}
+        QLabel#keyCap {{
+            background-color: {t["btn_bg"]};
+            color: {t["text_fg"]};
+            border: 1px solid {t["field_border"]};
+            border-bottom: 2px solid {t["slider_groove"]};
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-size: 11.5px;
+            font-weight: 600;
+        }}
+        QLabel#shortcutDesc {{
+            color: {t["text_fg"]};
+            font-size: 12.5px;
+        }}
     """
 
 
@@ -716,6 +741,7 @@ class PopupWindow(QWidget):
         self._variants: list[str] = []
         self._current_variant_idx: int = -1
         self._history: list[dict] = []
+        self._shortcuts_dialog: ShortcutsDialog | None = None
         self._server_probed.connect(self._on_models_queried)
 
         self._setup_window()
@@ -804,10 +830,25 @@ class PopupWindow(QWidget):
         input_layout.addWidget(self.draft_edit)
 
         # 2b. Collapsible "Replying to…" section inside container
+        reply_row = QHBoxLayout()
+        reply_row.setContentsMargins(0, 0, 0, 0)
+        reply_row.setSpacing(6)
+
         self.reply_toggle_btn = QPushButton("▸ Replying to… (optional)")
         self.reply_toggle_btn.setObjectName("sectionToggle")
         self.reply_toggle_btn.clicked.connect(self._toggle_reply_panel)
-        input_layout.addWidget(self.reply_toggle_btn)
+        reply_row.addWidget(self.reply_toggle_btn)
+
+        reply_row.addStretch(1)
+
+        self.move_to_reply_btn = QPushButton("Move draft to reply (⌥C)")
+        self.move_to_reply_btn.setObjectName("linkButton")
+        self.move_to_reply_btn.setToolTip("Move draft text into the 'Replying to' context (⌥C)")
+        self.move_to_reply_btn.clicked.connect(self.move_draft_to_reply)
+        self.move_to_reply_btn.setVisible(False)
+        reply_row.addWidget(self.move_to_reply_btn)
+
+        input_layout.addLayout(reply_row)
 
         self.context_edit = _DraftEdit()
         self.context_edit.setPlaceholderText("Paste the message you are replying to…")
@@ -867,6 +908,13 @@ class PopupWindow(QWidget):
         self.history_btn.setToolTip("Recent history (⌘H)")
         self.history_btn.clicked.connect(self.show_history_menu)
         toolbar.addWidget(self.history_btn)
+
+        # Shortcuts cheatsheet button
+        self.shortcuts_btn = QPushButton("⌨")
+        self.shortcuts_btn.setObjectName("iconButton")
+        self.shortcuts_btn.setToolTip("Shortcuts & Hotkeys (⌘/)")
+        self.shortcuts_btn.clicked.connect(self.show_shortcuts_dialog)
+        toolbar.addWidget(self.shortcuts_btn)
 
         # Settings button
         self.settings_btn = QPushButton("⚙")
@@ -1064,8 +1112,16 @@ class PopupWindow(QWidget):
             hist_sc = QShortcut(QKeySequence(seq), self)
             hist_sc.activated.connect(self.show_history_menu)
 
+        for seq in ("Alt+C", "Meta+Shift+C", "Ctrl+Shift+C"):
+            move_sc = QShortcut(QKeySequence(seq), self)
+            move_sc.activated.connect(self.move_draft_to_reply)
+
         settings_sc = QShortcut(QKeySequence("Ctrl+,"), self)
         settings_sc.activated.connect(self._on_settings_clicked)
+
+        for seq in ("Ctrl+/", "Meta+/", "Ctrl+?", "Meta+?", "F1"):
+            help_sc = QShortcut(QKeySequence(seq), self)
+            help_sc.activated.connect(self.show_shortcuts_dialog)
 
         quit_sc = QShortcut(QKeySequence("Ctrl+Q"), self)
         quit_sc.activated.connect(self.quit_requested.emit)
@@ -1109,6 +1165,8 @@ class PopupWindow(QWidget):
     def reload_config(self, cfg: dict | None = None) -> None:
         self.cfg = cfg if cfg is not None else config_mod.load(self._config_path)
         self._sync_from_config()
+        if self._shortcuts_dialog is not None:
+            self._shortcuts_dialog.update_config(self.cfg)
 
     def _save_config(self) -> None:
         try:
@@ -1280,6 +1338,11 @@ class PopupWindow(QWidget):
 
     def _on_settings_clicked(self) -> None:
         self.settings_requested.emit()
+
+    def show_shortcuts_dialog(self) -> None:
+        if self._shortcuts_dialog is None:
+            self._shortcuts_dialog = ShortcutsDialog(cfg=self.cfg, parent=self)
+        self._shortcuts_dialog.present()
 
     # ---------------------------------------------------------------- voice dictation
 
@@ -1610,6 +1673,7 @@ class PopupWindow(QWidget):
         self.shorter_btn.setEnabled(has_output and not self.is_generating())
         self.copy_btn.setEnabled(has_output and not self.is_generating())
         self.paste_btn.setEnabled(has_output and not self.is_generating())
+        self.move_to_reply_btn.setVisible(has_draft)
 
     # ---------------------------------------------------------------- clipboard & visibility
 
@@ -1625,6 +1689,39 @@ class PopupWindow(QWidget):
             self.draft_edit.setTextCursor(cursor)
             self._update_controls()
             self._update_counter()
+
+    def set_captured_context(self, text: str) -> None:
+        """Populate the 'Replying to' context from captured text and focus the draft."""
+        if text:
+            self.context_edit.setPlainText(text)
+            self.context_edit.setVisible(True)
+            self.reply_toggle_btn.setText("▾ Replying to… (optional: paste the message you got)")
+            self.draft_edit.clear()
+            self.draft_edit.setFocus()
+            self._update_controls()
+            self._update_counter()
+            self.adjustSize()
+
+    def open_reply_panel(self) -> None:
+        """Expand and focus the 'Replying to' context box."""
+        self.context_edit.setVisible(True)
+        self.reply_toggle_btn.setText("▾ Replying to… (optional: paste the message you got)")
+        self.context_edit.setFocus()
+        self.adjustSize()
+
+    def move_draft_to_reply(self) -> None:
+        """Transfer current draft text into the 'Replying to' context box."""
+        draft = self.draft_edit.toPlainText().strip()
+        if not draft:
+            return
+        self.context_edit.setPlainText(draft)
+        self.context_edit.setVisible(True)
+        self.reply_toggle_btn.setText("▾ Replying to… (optional: paste the message you got)")
+        self.draft_edit.clear()
+        self.draft_edit.setFocus()
+        self._update_controls()
+        self._update_counter()
+        self.adjustSize()
 
     def copy_output(self) -> bool:
         text = self.output_edit.toPlainText().strip()
@@ -1876,6 +1973,137 @@ class HotkeyRecorder(QPushButton):
         super().focusOutEvent(event)
 
 
+class ShortcutsDialog(QDialog):
+    """Clean cheatsheet modal showing all global hotkeys and in-window shortcuts."""
+
+    def __init__(self, cfg: dict | None = None, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.cfg = cfg or {}
+        self.setWindowTitle("Diplomat Shortcuts & Hotkeys")
+        self.setWindowFlags(
+            Qt.WindowType.Dialog
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        self.setMinimumWidth(500)
+        self.setStyleSheet(build_stylesheet(is_dark_mode()))
+        self._build_ui()
+
+    def present(self) -> None:
+        self.setStyleSheet(build_stylesheet(is_dark_mode()))
+        self.update_config(self.cfg)
+        self.show()
+        _configure_macos_window(self, level_offset=2, non_activating_panel=False)
+        if sys.platform == "darwin":
+            try:
+                import AppKit
+
+                AppKit.NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+            except Exception:
+                pass
+        self.raise_()
+        self.activateWindow()
+
+    def update_config(self, cfg: dict) -> None:
+        self.cfg = cfg
+        h_label = config_mod.format_hotkey_label(self.cfg.get("hotkey", config_mod.DEFAULTS["hotkey"]))
+        r_label = config_mod.format_hotkey_label(self.cfg.get("reply_hotkey", config_mod.DEFAULTS["reply_hotkey"]))
+        self.global_hotkey_lbl.setText(h_label)
+        self.global_reply_lbl.setText(r_label)
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 18, 22, 18)
+        root.setSpacing(14)
+
+        header = QLabel("Keyboard Shortcuts")
+        header.setObjectName("dialogTitle")
+        root.addWidget(header)
+
+        # Global Hotkeys section
+        sec1 = QLabel("GLOBAL (ANY APPLICATION)")
+        sec1.setObjectName("sectionTitle")
+        root.addWidget(sec1)
+
+        grid1 = QGridLayout()
+        grid1.setHorizontalSpacing(14)
+        grid1.setVerticalSpacing(8)
+
+        h_label = config_mod.format_hotkey_label(self.cfg.get("hotkey", config_mod.DEFAULTS["hotkey"]))
+        r_label = config_mod.format_hotkey_label(self.cfg.get("reply_hotkey", config_mod.DEFAULTS["reply_hotkey"]))
+
+        self.global_hotkey_lbl = QLabel(h_label)
+        self.global_hotkey_lbl.setObjectName("keyCap")
+        self.global_hotkey_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        grid1.addWidget(self.global_hotkey_lbl, 0, 0, Qt.AlignmentFlag.AlignLeft)
+        d1 = QLabel("Show / Hide Diplomat — grabs selected text in any app as draft")
+        d1.setObjectName("shortcutDesc")
+        grid1.addWidget(d1, 0, 1)
+
+        self.global_reply_lbl = QLabel(r_label)
+        self.global_reply_lbl.setObjectName("keyCap")
+        self.global_reply_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        grid1.addWidget(self.global_reply_lbl, 1, 0, Qt.AlignmentFlag.AlignLeft)
+        d2 = QLabel("Reply to Selection — grabs selected text as 'Replying to' context & focuses draft")
+        d2.setObjectName("shortcutDesc")
+        grid1.addWidget(d2, 1, 1)
+
+        root.addLayout(grid1)
+
+        # Divider
+        div = QFrame()
+        div.setObjectName("divider")
+        root.addWidget(div)
+
+        # Window shortcuts section
+        sec2 = QLabel("INSIDE DIPLOMAT WINDOW")
+        sec2.setObjectName("sectionTitle")
+        root.addWidget(sec2)
+
+        grid2 = QGridLayout()
+        grid2.setHorizontalSpacing(14)
+        grid2.setVerticalSpacing(7)
+
+        shortcuts = [
+            ("⌘ ↩  /  Ctrl+Enter", "Generate or regenerate polished rewrite"),
+            ("⇧ ↩  (Shift+Enter)", "Auto-paste polished rewrite directly into previous app"),
+            ("↩  (Enter in output)", "Copy polished text to clipboard & close"),
+            ("⌘ D", "Dictate voice input (WhatsApp-style mic)"),
+            ("⌘ S", "Make shorter (condense text)"),
+            ("⌥ [   /   ⌥ ]", "Navigate between output variants (◀ 1/2 ▶)"),
+            ("⌥ C", "Move draft text into 'Replying to' context"),
+            ("⌘ H", "Recent history menu (last 20 outputs with 1-click restore)"),
+            ("⌃ ⌘ Space", "macOS Emoji & symbols picker"),
+            ("⌘ K", "Clear all fields (draft, reply context, output)"),
+            ("⌘ ,", "Settings (model, provider, hotkeys, autostart)"),
+            ("⌘ /  /  ⌘ ?", "Show this shortcuts cheatsheet"),
+            ("Esc", "Cancel voice recording / cancel generation / close"),
+            ("⌘ Q", "Quit Diplomat"),
+        ]
+
+        for row, (key, desc) in enumerate(shortcuts):
+            k_lbl = QLabel(key)
+            k_lbl.setObjectName("keyCap")
+            k_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            grid2.addWidget(k_lbl, row, 0, Qt.AlignmentFlag.AlignLeft)
+            d_lbl = QLabel(desc)
+            d_lbl.setObjectName("shortcutDesc")
+            grid2.addWidget(d_lbl, row, 1)
+
+        root.addLayout(grid2)
+
+        # Footer button
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        close_btn = QPushButton("Done")
+        close_btn.setObjectName("primaryButton")
+        close_btn.setMinimumWidth(80)
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
+
+
 PROVIDER_LABELS = [
     ("ollama", "Ollama (localhost:11434)"),
     ("lmstudio", "LM Studio (localhost:1234)"),
@@ -1912,6 +2140,7 @@ class SettingsDialog(QDialog):
         list_models_fn: Callable[[str, str | None], list[str]] | None = None,
         test_connection_fn: Callable[[str, str, str | None], tuple[str, float]] | None = None,
         hotkey_status_fn: Callable[[str], tuple[bool, str | None]] | None = None,
+        reply_hotkey_status_fn: Callable[[str], tuple[bool, str | None]] | None = None,
         hotkey_pause_fn: Callable[[], None] | None = None,
         hotkey_resume_fn: Callable[[], None] | None = None,
         parent: QWidget | None = None,
@@ -1922,6 +2151,7 @@ class SettingsDialog(QDialog):
         self._list_models_fn = list_models_fn or (lambda url, key: llm.list_models(url, key))
         self._test_connection_fn = test_connection_fn or llm.test_connection
         self._hotkey_status_fn = hotkey_status_fn
+        self._reply_hotkey_status_fn = reply_hotkey_status_fn
         self._hotkey_pause_fn = hotkey_pause_fn
         self._hotkey_resume_fn = hotkey_resume_fn
 
@@ -2081,6 +2311,31 @@ class SettingsDialog(QDialog):
         grid.addWidget(self.hotkey_status_label, row, 1)
         row += 1
 
+        # Reply Hotkey recorder + Default button
+        reply_hotkey_row = QHBoxLayout()
+        reply_hotkey_row.setContentsMargins(0, 0, 0, 0)
+        reply_hotkey_row.setSpacing(8)
+        self.reply_hotkey_recorder = HotkeyRecorder()
+        if self._hotkey_pause_fn is not None:
+            self.reply_hotkey_recorder.recording_started.connect(self._hotkey_pause_fn)
+        if self._hotkey_resume_fn is not None:
+            self.reply_hotkey_recorder.recording_cancelled.connect(self._hotkey_resume_fn)
+        self.reply_hotkey_recorder.hotkey_changed.connect(self._on_reply_hotkey_changed)
+        reply_hotkey_row.addWidget(self.reply_hotkey_recorder, 1)
+
+        self.reset_reply_hotkey_btn = QPushButton("Default (⌥⇧ Space)")
+        self.reset_reply_hotkey_btn.setMinimumWidth(140)
+        self.reset_reply_hotkey_btn.clicked.connect(lambda: self._on_reply_hotkey_changed("option+shift+space"))
+        reply_hotkey_row.addWidget(self.reset_reply_hotkey_btn)
+        grid.addWidget(_make_row_label("Reply Hotkey:"), row, 0)
+        grid.addLayout(reply_hotkey_row, row, 1)
+        row += 1
+
+        self.reply_hotkey_status_label = _make_status_label()
+        self.reply_hotkey_status_label.setVisible(False)
+        grid.addWidget(self.reply_hotkey_status_label, row, 1)
+        row += 1
+
         # 7. Writing rules toggle
         self.slop_rules_check = QCheckBox("Use compact no-ai-slop writing rules")
         self.slop_rules_check.toggled.connect(self._on_slop_rules_toggled)
@@ -2180,6 +2435,7 @@ class SettingsDialog(QDialog):
         self.model_combo.blockSignals(False)
 
         self.hotkey_recorder.set_hotkey(self.cfg.get("hotkey", "option+space"))
+        self.reply_hotkey_recorder.set_hotkey(self.cfg.get("reply_hotkey", "option+shift+space"))
         self.slop_rules_check.blockSignals(True)
         self.slop_rules_check.setChecked(bool(self.cfg.get("slop_rules", True)))
         self.slop_rules_check.blockSignals(False)
@@ -2264,6 +2520,21 @@ class SettingsDialog(QDialog):
                 self.hotkey_status_label.setStyleSheet("color: #ff453a; font-size: 12px;")
                 self.hotkey_status_label.setText(err or f"● Could not register '{spec}'")
             self.hotkey_status_label.setVisible(True)
+            self.adjustSize()
+
+    def _on_reply_hotkey_changed(self, spec: str) -> None:
+        self.reply_hotkey_recorder.set_hotkey(spec)
+        self.cfg["reply_hotkey"] = spec
+        self._save_and_emit()
+        if self._reply_hotkey_status_fn is not None:
+            ok, err = self._reply_hotkey_status_fn(spec)
+            if ok:
+                self.reply_hotkey_status_label.setStyleSheet("color: #30d158; font-size: 12px;")
+                self.reply_hotkey_status_label.setText(f"● Reply Hotkey '{spec}' active")
+            else:
+                self.reply_hotkey_status_label.setStyleSheet("color: #ff453a; font-size: 12px;")
+                self.reply_hotkey_status_label.setText(err or f"● Could not register '{spec}'")
+            self.reply_hotkey_status_label.setVisible(True)
             self.adjustSize()
 
     def _on_slop_rules_toggled(self, checked: bool) -> None:

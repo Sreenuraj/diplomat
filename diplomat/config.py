@@ -24,6 +24,7 @@ DEFAULTS: dict = {
     "api_key": None,
     "model": "",  # empty = not chosen yet; pick one in Settings (or the CLI picks an installed one)
     "hotkey": "option+space",
+    "reply_hotkey": "option+shift+space",
     "default_preset": "slack_office",
     "slop_rules": True,
     "tone_open": False,
@@ -39,6 +40,23 @@ DEFAULTS: dict = {
         "brevity": 50,
     },
 }
+
+
+def format_hotkey_label(spec: str) -> str:
+    """Format 'option+space' into macOS-friendly '⌥ Space' for menus and UI."""
+    symbols = {
+        "option": "⌥",
+        "opt": "⌥",
+        "alt": "⌥",
+        "cmd": "⌘",
+        "command": "⌘",
+        "ctrl": "⌃",
+        "control": "⌃",
+        "shift": "⇧",
+        "space": "Space",
+    }
+    parts = [p.strip().lower() for p in (spec or "").split("+") if p.strip()]
+    return " ".join(symbols.get(p, p.upper()) for p in parts) or spec
 
 
 def config_path() -> Path:
